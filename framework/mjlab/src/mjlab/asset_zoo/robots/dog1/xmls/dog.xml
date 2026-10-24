@@ -1,0 +1,210 @@
+<mujoco model="TOE_dog">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+  <option cone="elliptic" impratio="100" />
+
+  <!-- =========== 重构的默认类 =========== -->
+  <default>
+    <default class="toe_dog">
+      <!-- 视觉几何体（不参与碰撞） -->
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" material="gray"/>
+      </default>
+      <!-- 碰撞几何体基类 -->
+      <default class="collision">
+        <geom group="3" type="capsule" contype="1" conaffinity="1"/>
+        <!-- 大腿段（三截） -->
+        <default class="thigh1">
+          <geom size="0.015" fromto="-0.02 0 0 -0.02 0 -0.16"/>
+        </default>
+        <default class="thigh2">
+          <geom size="0.015" fromto="0 0 0 -0.02 0 -0.1"/>
+        </default>
+        <default class="thigh3">
+          <geom size="0.015" fromto="-0.02 0 -0.16 0 0 -0.2"/>
+        </default>
+        <!-- 小腿段（两截） -->
+        <default class="calf1">
+          <geom size="0.01" fromto="0 0 0 0.02 0 -0.13"/>
+        </default>
+        <default class="calf2">
+          <geom size="0.01" fromto="0.02 0 -0.13 0 0 -0.2"/>
+        </default>
+        <!-- 足端球体 -->
+        <default class="foot">
+          <!-- 尺寸和位置沿用你原来的参数，但优先使用 foot 类的定义 -->
+          <geom type="sphere" size="0.022" pos="0 0 -0.2005" priority="1"
+                condim="6" friction="1.2 0.02 0.01"/>
+        </default>
+      </default>
+      <!-- 关节通用参数 -->
+      <joint axis="0 1 0" damping="0.1" armature="0.005" frictionloss="0.05"/>
+    </default>
+  </default>
+
+  <!-- =========== 资源 =========== -->
+  <asset>
+    <material name="metal" rgba=".9 .95 .95 1" />
+    <material name="black" rgba="0 0 0 1" />
+    <material name="white" rgba="1 1 1 1" />
+    <material name="gray" rgba="0.67 0.69 0.77 1" />
+
+    <mesh name="TOE_base" file="TOE_base.STL"/>
+    <mesh name="TOE_FL_hip" file="TOE_FL_hip.STL"/>
+    <mesh name="TOE_L_thigh" file="TOE_L_thigh.STL"/>
+    <mesh name="TOE_calf" file="TOE_calf.STL"/>
+    <mesh name="TOE_foot" file="TOE_foot.STL"/>
+    <mesh name="foot" file="foot.obj"/>  <!-- 原 foot.obj 未命名，现在补上 name -->
+    <mesh name="TOE_FR_hip" file="TOE_FR_hip.STL"/>
+    <mesh name="TOE_R_thigh" file="TOE_R_thigh.STL"/>
+    <mesh name="TOE_RL_hip" file="TOE_RL_hip.STL"/>
+    <mesh name="TOE_RR_hip" file="TOE_RR_hip.STL"/>
+  </asset>
+
+  <!-- =========== 运动学树 =========== -->
+  <worldbody>
+    <body name="base_link" pos="0 0 0.445" childclass="toe_dog">
+      <inertial pos="0 0 0" quat="-0.000543471 0.713435 -0.00173769 0.700719"
+        mass="5.1234705"
+        diaginertia="0.0656641 0.0578995 0.0175231" />
+      <freejoint />
+      <site name="imu" size="0.01" pos="0 0 0"/>
+
+      <!-- 躯干视觉 -->
+      <geom class="visual" mesh="TOE_base"/>
+      <!-- 躯干碰撞（用 box 近似） -->
+      <geom name="trunk_collision" type="box" size="0.135 0.075 0.057" pos="0 0 0"
+            group="3" contype="1" conaffinity="1"/>
+
+      <!-- ===== 左前腿 FL ===== -->
+      <body name="FL_hip" pos="0.2 0.05 0">
+        <inertial pos="0 0 0" quat="0.485437 0.52726 0.503798 0.48222" mass="0.669901" diaginertia="0.000851635 0.000609749 0.000545446"/>
+        <joint name="FL_hip_joint" axis="1 0 0" range="-1 1"/>
+        <!-- 视觉 -->
+        <geom class="visual" mesh="TOE_FL_hip"/>
+        <!-- 髋部碰撞（胶囊体，参数来自你原来的 cylinder） -->
+        <geom name="FL_hip_collision" class="collision" type="capsule" fromto="0 0.02 0 0 0.04 0" size="0.04"/>
+
+        <body name="FL_thigh" pos="0 0.08953 0">
+          <inertial pos="0 -0.0225193 -0.0253115" quat="0.980354 0.13425 0.0229827 -0.142673" mass="1.05419" diaginertia="0.00435723 0.00426548 0.00116428"/>
+          <joint name="FL_thigh_joint" axis="0 1 0" range="-1.5 2.5"/>
+          <!-- 视觉 -->
+          <geom class="visual" mesh="TOE_L_thigh"/>
+          <!-- 大腿碰撞体 -->
+          <geom name="FL_thigh_collision1" class="thigh1"/>
+          <geom name="FL_thigh_collision2" class="thigh2"/>
+          <geom name="FL_thigh_collision3" class="thigh3"/>
+
+          <body name="FL_calf" pos="0 0 -0.18">
+            <inertial pos="2.20012e-06 0 -0.0899722" quat="0.768153 0.0269288 0.0143643 0.639538" mass="0.22" diaginertia="0.00164183 0.00163561 5.05888e-05"/>
+            <joint name="FL_calf_joint" axis="0 1 0" range="-2.6 -0.15"/>
+            <!-- 视觉 -->
+            <geom class="visual" mesh="TOE_calf"/>
+            <!-- 小腿碰撞体 -->
+            <geom name="FL_calf_collision1" class="calf1"/>
+            <geom name="FL_calf_collision2" class="calf2"/>
+            <!-- 足端碰撞 -->
+            <geom name="FL_foot_collision" class="foot"/>
+            <!-- 足端视觉（可选） -->
+            <geom class="visual" mesh="foot" material="black"/>
+            <!-- 足端 site（用于观测） -->
+            <site name="FL" pos="0 0 -0.2005" type="sphere" size="0.022" group="5"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- ===== 右前腿 FR ===== -->
+      <body name="FR_hip" pos="0.2 -0.05 0">
+        <inertial pos="0 0 0" quat="0.503798 0.48222 0.485437 0.52726" mass="0.669901" diaginertia="0.000851635 0.000609749 0.000545446"/>
+        <joint name="FR_hip_joint" axis="1 0 0" range="-1 1"/>
+        <geom class="visual" mesh="TOE_FR_hip"/>
+        <geom name="FR_hip_collision" class="collision" type="capsule" fromto="0 -0.02 0 0 -0.04 0" size="0.04"/>
+
+        <body name="FR_thigh" pos="0 -0.08953 0">
+          <inertial pos="0 0.022389 -0.026316" quat="0.988507 -0.136232 -0.00402235 -0.0654148" mass="1.05822" diaginertia="0.00435124 0.00427162 0.00116411"/>
+          <joint name="FR_thigh_joint" axis="0 1 0" range="-1.5 2.5"/>
+          <geom class="visual" mesh="TOE_R_thigh"/>
+          <geom name="FR_thigh_collision1" class="thigh1"/>
+          <geom name="FR_thigh_collision2" class="thigh2"/>
+          <geom name="FR_thigh_collision3" class="thigh3"/>
+
+          <body name="FR_calf" pos="0 0 -0.18">
+            <inertial pos="2.20013e-06 0 -0.0899722" quat="0.784656 0.0173719 -0.000694465 0.619687" mass="0.22" diaginertia="0.00225074 0.0022481 4.70681e-05"/>
+            <joint name="FR_calf_joint" axis="0 1 0" range="-2.6 -0.15"/>
+            <geom class="visual" mesh="TOE_calf"/>
+            <geom name="FR_calf_collision1" class="calf1"/>
+            <geom name="FR_calf_collision2" class="calf2"/>
+            <geom name="FR_foot_collision" class="foot"/>
+            <geom class="visual" mesh="foot" material="black"/>
+            <site name="FR" pos="0 0 -0.2005" type="sphere" size="0.022" group="5"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- ===== 左后腿 RL ===== -->
+      <body name="RL_hip" pos="-0.2 0.05 0">
+        <inertial pos="0 0 0" quat="0.460656 0.523594 0.50641 0.507144" mass="0.669901" diaginertia="0.00085164 0.000609744 0.000545446"/>
+        <joint name="RL_hip_joint" axis="1 0 0" range="-1 1"/>
+        <geom class="visual" mesh="TOE_RL_hip"/>
+        <geom name="RL_hip_collision" class="collision" type="capsule" fromto="0 0.02 0 0 0.04 0" size="0.04"/>
+
+        <body name="RL_thigh" pos="0 0.08953 0">
+          <inertial pos="0 -0.0225193 -0.0253115" quat="0.989072 0.134036 0.028844 -0.0542121" mass="1.05419" diaginertia="0.00435414 0.00427351 0.00116666"/>
+          <joint name="RL_thigh_joint" axis="0 1 0" range="-1.5 2.5"/>
+          <geom class="visual" mesh="TOE_L_thigh"/>
+          <geom name="RL_thigh_collision1" class="thigh1"/>
+          <geom name="RL_thigh_collision2" class="thigh2"/>
+          <geom name="RL_thigh_collision3" class="thigh3"/>
+
+          <body name="RL_calf" pos="0 0 -0.18">
+            <inertial pos="2.20012e-06 0 -0.0899722" quat="0.589757 0.00217462 -0.0158376 0.807423" mass="0.22" diaginertia="0.00224982 0.0022483 4.68694e-05"/>
+            <joint name="RL_calf_joint" axis="0 1 0" range="-2.6 -0.15"/>
+            <geom class="visual" mesh="TOE_calf"/>
+            <geom name="RL_calf_collision1" class="calf1"/>
+            <geom name="RL_calf_collision2" class="calf2"/>
+            <geom name="RL_foot_collision" class="foot"/>
+            <geom class="visual" mesh="foot" material="black"/>
+            <site name="RL" pos="0 0 -0.2005" type="sphere" size="0.022" group="5"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- ===== 右后腿 RR ===== -->
+      <body name="RR_hip" pos="-0.2 -0.05 0">
+        <inertial pos="0 0 0" quat="0.50641 0.507144 0.460656 0.523594" mass="0.669901" diaginertia="0.00085164 0.000609744 0.000545446"/>
+        <joint name="RR_hip_joint" axis="1 0 0" range="-1 1"/>
+        <geom class="visual" mesh="TOE_RR_hip"/>
+        <geom name="RR_hip_collision" class="collision" type="capsule" fromto="0 -0.02 0 0 -0.04 0" size="0.04"/>
+
+        <body name="RR_thigh" pos="0 -0.08953 0">
+          <inertial pos="0 0.0223887 -0.0263162" quat="0.98398 -0.0928968 0.0223897 0.150504" mass="1.05822" diaginertia="0.0044277 0.00434271 0.00116706"/>
+          <joint name="RR_thigh_joint" axis="0 1 0" range="-1.5 2.5"/>
+          <geom class="visual" mesh="TOE_R_thigh"/>
+          <geom name="RR_thigh_collision1" class="thigh1"/>
+          <geom name="RR_thigh_collision2" class="thigh2"/>
+          <geom name="RR_thigh_collision3" class="thigh3"/>
+
+          <body name="RR_calf" pos="0 0 -0.18">
+            <inertial pos="2.20012e-06 0 -0.0899722" quat="0.633334 0.00270795 -0.015959 0.773709" mass="0.22" diaginertia="0.00225069 0.00224833 4.69019e-05"/>
+            <joint name="RR_calf_joint" axis="0 1 0" range="-2.6 -0.15"/>
+            <geom class="visual" mesh="TOE_calf"/>
+            <geom name="RR_calf_collision1" class="calf1"/>
+            <geom name="RR_calf_collision2" class="calf2"/>
+            <geom name="RR_foot_collision" class="foot"/>
+            <geom class="visual" mesh="foot" material="black"/>
+            <site name="RR" pos="0 0 -0.2005" type="sphere" size="0.022" group="5"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- 执行器：由 Python 代码动态添加，XML 中不再定义 -->
+  <actuator/>
+
+  <!-- 传感器：只保留必要的 IMU -->
+  <sensor>
+    <gyro name="imu_ang_vel" site="imu"/>
+    <velocimeter name="imu_lin_vel" site="imu"/>
+    <accelerometer name="imu_lin_acc" site="imu"/>
+  </sensor>
+</mujoco>
