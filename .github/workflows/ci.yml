@@ -24,3 +24,8 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -q
+
+      - name: Test sim2sim
+        run: |
+          PYTHONPATH=sim2sim uv run python -m unittest discover -s sim2sim/tests
+          uv run python sim2sim/go1_sim.py --headless --steps 100

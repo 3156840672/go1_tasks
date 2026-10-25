@@ -32,7 +32,8 @@ Unitree Go1 任务中，并提供平地、崎岖地形速度跟踪基线。运�
   只保留框架与资产），以 uv workspace 成员的形式随本项目一起安装。
 - `vendor/mujoco_warp/`：vendored 的 `mujoco-warp` 源码，安装时不依赖
   GitHub 拉取。
-- `docs/`、`tests/`：文档与测试。
+- `sim2sim/`：独立 MuJoCo 推理场景、Go1 模型、地形资源与部署测试。
+- `docs/`、`tests/`：文档与训练任务测试。
 
 ## 克隆与安装
 
@@ -112,11 +113,25 @@ uv run pytest
 `tests/test_go1_constants.py` 校验 Go1 资产参数，`tests/test_go1_cts.py` 与
 `tests/test_go1_mob.py` 校验任务配置与算法契约，
 `tests/test_training_logging.py` 校验训练日志依赖的兼容性。
+sim2sim 的场景和推理接口可运行：
+
+```bash
+PYTHONPATH=sim2sim uv run python -m unittest discover -s sim2sim/tests
+```
 
 ## sim2sim
 
-独立的 MuJoCo sim2sim 部署项目（读取训练 checkpoint、不导入本仓库）单独
-维护，训练完成后按其 README 运行即可，不在本仓库内。
+`sim2sim/` 已包含在仓库中，使用独立的 MuJoCo 场景，不依赖训练时的
+`mjlab` 环境对象。可先在无检查点时测试模型与地形：
+
+```bash
+uv run python sim2sim/go1_sim.py --headless --steps 100
+```
+
+本仓库训练的 Flat（48 维观测）和 MoB（1710 维观测）检查点有对应推理脚本；
+当前 Rough（235 维观测）和 CTS 检查点不支持直接运行。旧 RMA 教师/适应器
+检查点也可由 `go1_sim.py` 加载，但 RMA 训练流程不在本仓库中。
+命令、控制方式和检查点约定见 [sim2sim/README.md](sim2sim/README.md)。
 
 ## 许可与第三方代码
 
@@ -129,7 +144,9 @@ uv run pytest
   [Isaac Lab BSD 许可](framework/mjlab/LICENSES/BSD-3-Clause.txt)；
 - `vendor/mujoco_warp/` 为
   [mujoco_warp](https://github.com/google-deepmind/mujoco_warp) 的副本，
-  Apache-2.0，许可见 `vendor/mujoco_warp/LICENSE`。
+  Apache-2.0，许可见 `vendor/mujoco_warp/LICENSE`；
+- `sim2sim/terrain_assets/` 中的 rl_sar 场景资源保留
+  [上游许可](sim2sim/terrain_assets/RL_SAR_LICENSE)。
 
 再分发时请保留相应的版权声明和许可文件。机器人模型资产的来源与授权还应
 在公开发布前单独核对。
