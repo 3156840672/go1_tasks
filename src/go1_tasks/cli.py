@@ -24,6 +24,13 @@ def eval_cts() -> None:
   main()
 
 
+def train_rma() -> None:
+  """Train the Go1 RMA teacher or adaptation module."""
+  from go1_tasks.train_rma import main
+
+  main()
+
+
 def list_go1_tasks() -> None:
   """Print the registered Go1 task IDs."""
   for key, package_id in go1_tasks.TASK_IDS.items():

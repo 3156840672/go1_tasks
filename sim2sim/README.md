@@ -2,12 +2,12 @@
 
 本目录随 `go1-tasks` 一起发布，在独立的 MuJoCo 场景中运行 Go1 策略；
 推理脚本不导入 `mjlab` 或 `rsl_rl`。支持本仓库的 `Go1-Velocity-Flat`
-和 `Go1-Velocity-MoB` 检查点，以及旧版 48 维 RMA 教师/适应器检查点。
+和 `Go1-Velocity-MoB` 检查点，以及本仓库训练的 48 维 RMA teacher/adapter。
 **当前 `Go1-Velocity-Rough` 的 235 维高度扫描策略与 CTS 策略不受这些脚本支持。**
 本仓库不附带训练检查点。
 
-RMA 运行程序使用旧项目两阶段训练得到的检查点；本仓库没有 RMA 训练任务，
-需要自行提供兼容的教师和适应器文件。运行脚本只需 Python、MuJoCo、NumPy、
+RMA 检查点可通过根目录的 `go1-train-rma` 两阶段流程训练，详见
+[`docs/rma.md`](../docs/rma.md)。运行脚本只需 Python、MuJoCo、NumPy、
 PyTorch 和本目录的 Go1 模型文件。
 
 ## 安装与运行

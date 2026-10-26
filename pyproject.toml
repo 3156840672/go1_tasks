@@ -22,6 +22,7 @@ dependencies = [
 go1-train = "go1_tasks.cli:train"
 go1-play = "go1_tasks.cli:play"
 go1-eval-cts = "go1_tasks.cli:eval_cts"
+go1-train-rma = "go1_tasks.cli:train_rma"
 go1-list-tasks = "go1_tasks.cli:list_go1_tasks"
 
 [project.entry-points."mjlab.tasks"]
