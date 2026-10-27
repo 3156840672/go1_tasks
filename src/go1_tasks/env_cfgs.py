@@ -647,3 +647,47 @@ def unitree_go1_mob_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   )
   cfg.curriculum.pop("command_vel", None)
   return cfg
+
+
+def unitree_go1_amp_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Flat forward-locomotion task using MoB Trot clips only as AMP references."""
+  cfg = unitree_go1_mob_env_cfg(play=play)
+  # AMP learns Trot style from motion data, not from MoB behavior commands.
+  cfg.commands.pop("behavior")
+  actor = cfg.observations["actor"]
+  actor.terms.pop("behavior")
+  actor.terms.pop("clock")
+  actor.history_length = 1
+  critic = cfg.observations["critic"]
+  critic.terms.pop("behavior")
+  critic.terms.pop("clock")
+  cfg.metrics.pop("body_height_error")
+  # The reference clips only contain positive forward speeds.
+  twist = unitree_go1_mob_env_cfg(play=True).commands["twist"]
+  assert isinstance(twist, UniformVelocityCommandCfg)
+  twist.ranges.lin_vel_x = (0.2, 0.8)
+  twist.ranges.lin_vel_y = (0.0, 0.0)
+  twist.ranges.ang_vel_z = (0.0, 0.0)
+  twist.rel_standing_envs = 0.0
+  twist.rel_heading_envs = 0.0
+  twist.rel_forward_envs = 0.0
+  twist.resampling_time_range = (4.0, 8.0)
+  cfg.commands["twist"] = twist
+  cfg.curriculum.pop("command_vel", None)
+
+  flat_rewards = unitree_go1_flat_env_cfg(play=play).rewards
+  cfg.rewards = {
+    name: deepcopy(flat_rewards[name])
+    for name in (
+      "track_linear_velocity",
+      "upright",
+      "dof_pos_limits",
+      "action_rate_l2",
+      "foot_slip",
+    )
+  }
+  cfg.rewards["track_linear_velocity"].weight = 2.0
+  cfg.rewards["upright"].weight = 0.2
+  cfg.rewards["action_rate_l2"].weight = -0.05
+  cfg.rewards["foot_slip"].weight = -0.05
+  return cfg

@@ -15,7 +15,6 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 from mjlab.scripts._cli import maybe_print_top_level_help
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
-from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.utils.os import get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
 from mjlab.utils.wrappers import VideoRecorder
@@ -33,12 +32,10 @@ def _parse_wandb_dt(value: str | datetime) -> datetime:
 @dataclass(frozen=True)
 class PlayConfig:
   agent: Literal["zero", "random", "trained"] = "trained"
-  registry_name: str | None = None
   wandb_run_path: str | None = None
   wandb_checkpoint_name: str | None = None
   """Optional checkpoint name within the W&B run to load (e.g. 'model_4000.pt')."""
   checkpoint_file: str | None = None
-  motion_file: str | None = None
   num_envs: int | None = None
   device: str | None = None
   video: bool = False
@@ -69,63 +66,6 @@ def run_play(task_id: str, cfg: PlayConfig):
   if cfg.no_terminations:
     env_cfg.terminations = {}
     print("[INFO]: Terminations disabled")
-
-  # Check if this is a tracking task by checking for motion command.
-  is_tracking_task = "motion" in env_cfg.commands and isinstance(
-    env_cfg.commands["motion"], MotionCommandCfg
-  )
-
-  if is_tracking_task and cfg._demo_mode:
-    # Demo mode: use uniform sampling to see more diversity with num_envs > 1.
-    motion_cmd = env_cfg.commands["motion"]
-    assert isinstance(motion_cmd, MotionCommandCfg)
-    motion_cmd.sampling_mode = "uniform"
-
-  if is_tracking_task:
-    motion_cmd = env_cfg.commands["motion"]
-    assert isinstance(motion_cmd, MotionCommandCfg)
-
-    # Check for local motion file first (works for both dummy and trained modes).
-    if cfg.motion_file is not None and Path(cfg.motion_file).exists():
-      print(f"[INFO]: Using local motion file: {cfg.motion_file}")
-      motion_cmd.motion_file = cfg.motion_file
-    elif DUMMY_MODE:
-      if not cfg.registry_name:
-        raise ValueError(
-          "Tracking tasks require either:\n"
-          "  --motion-file /path/to/motion.npz (local file)\n"
-          "  --registry-name your-org/motions/motion-name (download from WandB)"
-        )
-      # Check if the registry name includes alias, if not, append ":latest".
-      registry_name = cfg.registry_name
-      if ":" not in registry_name:
-        registry_name = registry_name + ":latest"
-      import wandb
-
-      api = wandb.Api()
-      artifact = api.artifact(registry_name)
-      motion_cmd.motion_file = str(Path(artifact.download()) / "motion.npz")
-    else:
-      if cfg.motion_file is not None:
-        print(f"[INFO]: Using motion file from CLI: {cfg.motion_file}")
-        motion_cmd.motion_file = cfg.motion_file
-      else:
-        import wandb
-
-        api = wandb.Api()
-        if cfg.wandb_run_path is None and cfg.checkpoint_file is not None:
-          raise ValueError(
-            "Tracking tasks require `motion_file` when using `checkpoint_file`, "
-            "or provide `wandb_run_path` so the motion artifact can be resolved."
-          )
-        if cfg.wandb_run_path is not None:
-          wandb_run = api.run(str(cfg.wandb_run_path))
-          art = next(
-            (a for a in wandb_run.used_artifacts() if a.type == "motions"), None
-          )
-          if art is None:
-            raise RuntimeError("No motion artifact found in the run.")
-          motion_cmd.motion_file = str(Path(art.download()) / "motion.npz")
 
   log_dir: Path | None = None
   resume_path: Path | None = None

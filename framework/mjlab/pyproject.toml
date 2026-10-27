@@ -7,7 +7,7 @@ name = "mjlab"
 version = "1.3.0"
 license = "Apache-2.0 AND BSD-3-Clause"
 license-files = ["LICENSE", "LICENSES/BSD-3-Clause.txt"]
-description = "Isaac Lab API, powered by MuJoCo-Warp, for RL and robotics research."
+description = "Go1-focused mjlab framework subset powered by MuJoCo-Warp."
 requires-python = ">=3.10,<3.14"
 keywords = ["mujoco", "mujoco-warp", "simulation", "reinforcement-learning", "robotics"]
 dependencies = [
@@ -17,8 +17,6 @@ dependencies = [
   "packaging",
   "prettytable",
   "PyYAML",
-  "requests",
-  "tqdm",
   "typing-extensions",
   "tyro>=1.0.1",
   "torch>=2.7.0",
@@ -42,7 +40,6 @@ dependencies = [
 [project.scripts]
 train = "mjlab.scripts.train:main"
 play = "mjlab.scripts.play:main"
-demo = "mjlab.scripts.demo:main"
 list-envs = "mjlab.scripts.list_envs:main"
 viz-nan = "mjlab.scripts.nan_viz:main"
 export-scene = "mjlab.scripts.export_scene:main"

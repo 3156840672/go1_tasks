@@ -1,8 +1,8 @@
 # go1-tasks
 
-本项目将三篇四足机器人强化学习论文的核心方法移植到 MuJoCo/mjlab 的
+本项目将多种四足机器人强化学习方法移植到 MuJoCo/mjlab 的
 Unitree Go1 任务中，并提供平地、崎岖地形速度跟踪基线。运行所需的 `mjlab`
-框架随仓库打包；克隆后无需额外下载源码即可安装、训练与播放。包含四个注册
+框架随仓库打包；克隆后无需额外下载源码即可安装、训练与播放。包含五个注册
 任务和一套 RMA 两阶段训练流程：
 
 | key | 包内任务 ID | 说明 |
@@ -10,6 +10,7 @@ Unitree Go1 任务中，并提供平地、崎岖地形速度跟踪基线。运�
 | `rough` | `Go1-Velocity-Rough` | 崎岖地形速度跟踪基线 |
 | `flat` | `Go1-Velocity-Flat` | 平地速度跟踪基线 |
 | `mob` | `Go1-Velocity-MoB` | Walk These Ways 启发的多行为步态策略 |
+| `amp` | `Go1-Velocity-AMP` | 使用 MoB 参考动作的对抗模仿训练 |
 | `cts` | `Go1-Velocity-CTS` | CTS 启发的并发师生策略 |
 
 RMA 使用独立的 `go1-train-rma` 命令训练 teacher 和 adaptation module，
@@ -33,8 +34,9 @@ RMA 使用独立的 `go1-train-rma` 命令训练 teacher 和 adaptation module�
 项目结构：
 
 - `src/go1_tasks/`：Go1 任务定义（环境配置、RMA、CTS、MoB、奖励与课程）。
-- `framework/mjlab/`：vendored 的 `mjlab` 框架（已移除其内置的 Go1 任务，
-  只保留框架与资产），以 uv workspace 成员的形式随本项目一起安装。
+- `framework/mjlab/`：面向本项目裁剪的 `mjlab` 框架，只保留通用仿真、
+  环境、地形、传感器、RL 组件和 Unitree Go1 资产；以 uv workspace 成员的
+  形式随本项目一起安装。
 - `vendor/mujoco_warp/`：vendored 的 `mujoco-warp` 源码，安装时不依赖
   GitHub 拉取。
 - `sim2sim/`：独立 MuJoCo 推理场景、Go1 模型、地形资源与部署测试。
@@ -67,16 +69,18 @@ torch = { index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }
 本项目同时注册两套 ID：
 
 - 历史 ID（`Mjlab-Velocity-Rough/Flat/MoB/CTS-Unitree-Go1`）——由本包注册；
-- 包内 ID（`Go1-Velocity-Rough/Flat/MoB/CTS`）——始终可用。
+- 包内 ID（`Go1-Velocity-Rough/Flat/MoB/AMP/CTS`）——始终可用。
 
-两套 ID 指向同一份配置。查看当前生效的 ID：
+AMP 只注册包内 ID，其余四项也有对应的历史 ID。
+
+已有历史 ID 与对应包内 ID 指向同一份配置。查看当前生效的 ID：
 
 ```bash
 uv run go1-list-tasks
 ```
 
-checkpoint 目录保持不变（`logs/rsl_rl/go1_velocity`、`go1_mob`、`go1_cts`、
-`go1_rma`），已有 checkpoint 可以继续加载。
+各任务 checkpoint 分别存放在 `logs/rsl_rl/go1_velocity`、`go1_mob`、
+`go1_amp`、`go1_cts`、`go1_rma`；已有任务的 checkpoint 路径不变。
 
 ## 训练与播放
 
@@ -96,6 +100,10 @@ uv run train Mjlab-Velocity-Rough-Unitree-Go1 --env.scene.num-envs 1024
 
 论文相关任务的详细说明见 [`docs/rma.md`](docs/rma.md)、
 [`docs/cts.md`](docs/cts.md) 与 [`docs/mob.md`](docs/mob.md)。
+
+使用已训练的 MoB 策略采集 AMP 参考动作、读取数据并运行 AMP 训练，见
+[`docs/amp_tutorial.md`](docs/amp_tutorial.md)；数据字段与采集参数见
+[`docs/amp_mob_collection.md`](docs/amp_mob_collection.md)。
 
 ## RMA 两阶段训练
 

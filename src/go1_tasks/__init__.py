@@ -22,13 +22,14 @@ from mjlab.tasks.registry import list_tasks, register_mjlab_task
 from mjlab.tasks.velocity.rl import VelocityOnPolicyRunner
 
 from .env_cfgs import (
+  unitree_go1_amp_env_cfg,
   unitree_go1_cts_env_cfg,
   unitree_go1_flat_env_cfg,
   unitree_go1_mob_env_cfg,
   unitree_go1_rough_env_cfg,
 )
 from .mob_runner import MobOnPolicyRunner
-from .rl_cfg import CtsPpoAlgorithmCfg, unitree_go1_ppo_runner_cfg
+from .rl_cfg import AmpPpoAlgorithmCfg, CtsPpoAlgorithmCfg, unitree_go1_ppo_runner_cfg
 
 
 def mob_rl_cfg() -> RslRlBaseRunnerCfg:
@@ -46,6 +47,15 @@ def cts_rl_cfg() -> RslRlBaseRunnerCfg:
   cfg.actor.class_name = "go1_tasks.cts.CTSActor"
   cfg.algorithm = CtsPpoAlgorithmCfg(**asdict(cfg.algorithm))
   cfg.algorithm.class_name = "go1_tasks.cts.CTSPPO"
+  return cfg
+
+
+def amp_rl_cfg() -> RslRlBaseRunnerCfg:
+  """PPO and discriminator configuration for MoB-reference AMP."""
+  cfg = unitree_go1_ppo_runner_cfg()
+  cfg.experiment_name = "go1_amp"
+  cfg.algorithm = AmpPpoAlgorithmCfg(**asdict(cfg.algorithm))
+  cfg.algorithm.class_name = "go1_tasks.amp.AmpPPO"
   return cfg
 
 
@@ -86,6 +96,13 @@ _SPECS: tuple[TaskSpec, ...] = (
     runner_cls=MobOnPolicyRunner,
   ),
   TaskSpec(
+    key="amp",
+    ids=("Go1-Velocity-AMP",),
+    env_cfg=unitree_go1_amp_env_cfg,
+    rl_cfg=amp_rl_cfg,
+    runner_cls=VelocityOnPolicyRunner,
+  ),
+  TaskSpec(
     key="cts",
     ids=("Mjlab-Velocity-CTS-Unitree-Go1", "Go1-Velocity-CTS"),
     env_cfg=unitree_go1_cts_env_cfg,
@@ -103,6 +120,7 @@ _REGISTERED: dict[str, str] = {}
 __all__ = [
   "TASK_IDS",
   "TaskSpec",
+  "amp_rl_cfg",
   "cts_rl_cfg",
   "mob_rl_cfg",
   "register_tasks",

@@ -16,6 +16,17 @@ class CtsPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
   student_batch_size: int = 512
 
 
+@dataclass
+class AmpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
+  reference_path: str = "logs/amp/mob_reference/trot"
+  amp_reward_weight: float = 0.5
+  discriminator_learning_rate: float = 1e-4
+  discriminator_epochs: int = 2
+  discriminator_batch_size: int = 256
+  gradient_penalty_weight: float = 5.0
+  replay_capacity: int = 100_000
+
+
 def unitree_go1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree Go1 velocity task."""
   return RslRlOnPolicyRunnerCfg(
