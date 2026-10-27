@@ -2,6 +2,7 @@
 
 from dataclasses import asdict
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from mjlab.envs import ManagerBasedRlEnv
@@ -12,6 +13,30 @@ from rsl_rl.algorithms import PPO
 from go1_tasks import TASK_IDS
 from go1_tasks.amp import AmpPPO
 from go1_tasks.amp_data import TRANSITION_DIM, amp_frame_from_robot
+
+
+def _write_reference_clip(path, robot) -> None:
+  foot_ids, foot_names = robot.find_sites(("FR", "FL", "RR", "RL"), preserve_order=True)
+  data = robot.data
+  fields = {
+    "root_pos_w": data.root_link_pos_w[0],
+    "root_quat_w": data.root_link_quat_w[0],
+    "root_lin_vel_b": data.root_link_lin_vel_b[0],
+    "root_ang_vel_b": data.root_link_ang_vel_b[0],
+    "joint_pos": data.joint_pos[0],
+    "joint_vel": data.joint_vel[0],
+    "foot_pos_w": data.site_pos_w[0, foot_ids],
+  }
+  np.savez_compressed(
+    path,
+    **{
+      name: np.repeat(value.cpu().numpy()[None], 3, axis=0)
+      for name, value in fields.items()
+    },
+    fps=np.array(50.0),
+    joint_names=np.array(robot.joint_names),
+    foot_site_names=np.array(foot_names),
+  )
 
 
 def test_amp_task_and_update(tmp_path) -> None:
@@ -29,6 +54,8 @@ def test_amp_task_and_update(tmp_path) -> None:
   wrapped = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
   try:
     obs = wrapped.get_observations()
+    _write_reference_clip(tmp_path / "reference.npz", env.scene["robot"])
+    agent_cfg.algorithm.reference_path = str(tmp_path)
     assert obs["actor"].shape == (2, 45)
     assert obs["critic"].shape == (2, 72)
     assert "behavior" not in cfg.commands
