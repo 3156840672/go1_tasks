@@ -24,6 +24,24 @@ uv run --no-sync python -m go1_tasks.collect_mob_amp \
 一个 `.npz` 文件。`logs/` 已被 Git 忽略。更换检查点时，需要显式指定新路径。
 没有可用 GPU 时，可加 `--device cpu`。
 
+## 查看参考动作
+
+采集后先看 `.npz` 里的真实关节轨迹。下面的命令生成一段 3 秒 GIF：左侧是侧视图，
+中间是俯视图，右侧是四只脚的离地高度；颜色分别对应 FR（红）、FL（蓝）、
+RR（橙）、RL（绿）。动画用 Go1 的 MuJoCo 模型和保存的根姿态、关节角做正运动学，
+还会核对算出的脚位置与文件中保存的脚位置是否一致。
+
+```bash
+uv run --no-sync python -m go1_tasks.visualize_amp_reference \
+  logs/amp/mob_reference/trot/vx_+0p60/clip_000.npz \
+  --output logs/amp/reference_preview_vx_0p60.gif \
+  --seconds 3
+```
+
+可将路径中的 `vx_+0p60` 换成 `vx_+0p20`、`vx_+0p40` 或 `vx_+0p80`，
+分别查看四种速度。`--start` 可以选取片段中的其他时刻。生成文件位于本机的
+`logs/amp/`，该目录不会提交到 Git。
+
 采集脚本使用 50 Hz 的播放环境，并关闭自动重置。机器人在预热或录制期间跌倒
 时，脚本丢弃当前片段并重试，默认最多重试五次。因此，输出文件不会把前一次
 运行的末帧与重置后的首帧接在一起。脚本不会覆盖已有文件；中断后加

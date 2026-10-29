@@ -4,14 +4,13 @@ from dataclasses import asdict
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
 from rsl_rl.algorithms import PPO
 
 from go1_tasks import TASK_IDS
-from go1_tasks.amp import AmpPPO
+from go1_tasks.amp import AmpPPO, amp_style_reward
 from go1_tasks.amp_data import TRANSITION_DIM, amp_frame_from_robot
 
 
@@ -21,6 +20,8 @@ def _write_reference_clip(path, robot) -> None:
   fields = {
     "root_pos_w": data.root_link_pos_w[0],
     "root_quat_w": data.root_link_quat_w[0],
+    "root_lin_vel_w": data.root_link_lin_vel_w[0],
+    "root_ang_vel_w": data.root_link_ang_vel_w[0],
     "root_lin_vel_b": data.root_link_lin_vel_b[0],
     "root_ang_vel_b": data.root_link_ang_vel_b[0],
     "joint_pos": data.joint_pos[0],
@@ -43,6 +44,7 @@ def test_amp_task_and_update(tmp_path) -> None:
   cfg = load_env_cfg(TASK_IDS["amp"])
   cfg.scene.num_envs = 2
   cfg.events.pop("push_robot", None)
+  cfg.events.pop("amp_reference_state_init")
   agent_cfg = load_rl_cfg(TASK_IDS["amp"])
   agent_cfg.num_steps_per_env = 2
   agent_cfg.algorithm.num_learning_epochs = 1
@@ -84,10 +86,13 @@ def test_amp_task_and_update(tmp_path) -> None:
           (algorithm._previous_frame, amp_frame_from_robot(env.scene["robot"])),
           dim=-1,
         )
+        logits = algorithm.discriminator(
+          algorithm._normalize_transitions(transitions)
+        )
         expected = rewards.clone() + (
           algorithm.amp_reward_weight
           * env.step_dt
-          * F.softplus(algorithm.discriminator(transitions))
+          * amp_style_reward(logits)
           * ~dones.bool().reshape(-1)
         )
         algorithm.process_env_step(obs, rewards, dones, extras)
@@ -96,6 +101,10 @@ def test_amp_task_and_update(tmp_path) -> None:
     losses = algorithm.update()
     assert torch.isfinite(torch.tensor(list(losses.values()))).all()
     assert "amp_discriminator" in losses
+    assert losses["amp_style_reward_raw"] > 0
+    assert losses["amp_style_reward_per_step"] > 0
+    assert "amp_expert_logit" in losses
+    assert "amp_policy_logit" in losses
     checkpoint = algorithm.save()
     assert "amp_discriminator_state_dict" in checkpoint
     assert algorithm.load(checkpoint, load_cfg=None, strict=True)

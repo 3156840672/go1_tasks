@@ -15,6 +15,7 @@ from mjlab.terrains import BoxPyramidStairsTerrainCfg, HfPyramidSlopedTerrainCfg
 
 from go1_tasks import TASK_IDS
 from go1_tasks.cts import (
+  CtsTurnCommandCfg,
   CTSActor,
   feet_regulation,
   linear_velocity_error_l2,
@@ -133,6 +134,10 @@ def test_cts_task_configuration() -> None:
   assert cfg.rewards["linear_velocity_error_l2"].weight == -1.0
   twist = cfg.commands["twist"]
   assert isinstance(twist, UniformVelocityCommandCfg)
+  assert isinstance(twist, CtsTurnCommandCfg)
+  assert twist.resampling_time_range == (3.0, 8.0)
+  assert twist.turn_resampling_time_range == (8.0, 15.0)
+  assert twist.rel_turn_envs == 0.2
   assert twist.rel_standing_envs == 0.1
   assert twist.rel_heading_envs == 0.1
   assert twist.rel_forward_envs == 0.1

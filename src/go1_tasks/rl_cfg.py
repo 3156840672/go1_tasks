@@ -19,11 +19,12 @@ class CtsPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
 @dataclass
 class AmpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
   reference_path: str = "logs/amp/mob_reference/trot"
-  amp_reward_weight: float = 0.5
+  amp_reward_weight: float = 2.0
   discriminator_learning_rate: float = 1e-4
-  discriminator_epochs: int = 2
-  discriminator_batch_size: int = 256
-  gradient_penalty_weight: float = 5.0
+  discriminator_epochs: int = 1
+  discriminator_batch_size: int = 1024
+  discriminator_batches_per_iteration: int = 8
+  gradient_penalty_weight: float = 10.0
   replay_capacity: int = 100_000
 
 

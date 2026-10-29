@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,16 @@ REQUIRED_FIELDS = (
   "joint_pos",
   "joint_vel",
   "foot_pos_w",
+)
+# The reset event additionally needs the world-frame root velocities that the
+# discriminator feature does not use. Keep the two contracts in one place.
+RESET_FIELDS = (
+  "root_pos_w",
+  "root_quat_w",
+  "root_lin_vel_w",
+  "root_ang_vel_w",
+  "joint_pos",
+  "joint_vel",
 )
 
 
@@ -71,14 +82,22 @@ def amp_frame(
 
 
 def amp_frame_from_robot(
-  robot, *, joint_names: tuple[str, ...] | None = None
+  robot,
+  *,
+  joint_names: tuple[str, ...] | None = None,
+  foot_ids: Sequence[int] | None = None,
 ) -> torch.Tensor:
-  """Extract the same AMP frame from every environment of a live Go1 robot."""
+  """Extract the same AMP frame from every environment of a live Go1 robot.
+
+  ``foot_ids`` may be cached once at startup to avoid resolving site names on
+  every control step.
+  """
   if joint_names is not None and tuple(robot.joint_names) != joint_names:
     raise ValueError("Live robot joint order differs from the reference motions")
-  foot_ids, foot_names = robot.find_sites(FOOT_NAMES, preserve_order=True)
-  if tuple(foot_names) != FOOT_NAMES:
-    raise ValueError(f"Unexpected foot order: {foot_names}")
+  if foot_ids is None:
+    foot_ids, foot_names = robot.find_sites(FOOT_NAMES, preserve_order=True)
+    if tuple(foot_names) != FOOT_NAMES:
+      raise ValueError(f"Unexpected foot order: {foot_names}")
   data = robot.data
   return amp_frame(
     data.root_link_pos_w,

@@ -35,7 +35,11 @@ Existing Go1 rough/MoB checkpoints have different network shapes and cannot be
 resumed into this task.
 
 CTS training samples 10% standing, 10% heading-controlled, and 10% forward-only
-commands. Its command curriculum uses the following ranges (m/s, rad/s):
+commands, plus pure turning commands in 20% of the remaining worlds. Pure turns
+zero the linear command and retain a signed yaw command of at least 0.1 rad/s.
+Pure turns last 8–15 s; other commands retain the 3–8 s sampling interval.
+The command curriculum uses the
+following ranges (m/s, rad/s):
 
 | Iteration | Forward x | Lateral y | Yaw |
 | --- | --- | --- | --- |

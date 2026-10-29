@@ -103,7 +103,8 @@ uv run train Mjlab-Velocity-Rough-Unitree-Go1 --env.scene.num-envs 1024
 
 使用已训练的 MoB 策略采集 AMP 参考动作、读取数据并运行 AMP 训练，见
 [`docs/amp_tutorial.md`](docs/amp_tutorial.md)；数据字段与采集参数见
-[`docs/amp_mob_collection.md`](docs/amp_mob_collection.md)。
+[`docs/amp_mob_collection.md`](docs/amp_mob_collection.md)；逐文件的原理与代码
+讲解见 [`docs/amp_code_tutorial.md`](docs/amp_code_tutorial.md)。
 
 ## RMA 两阶段训练
 

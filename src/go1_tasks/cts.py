@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
@@ -15,6 +16,49 @@ from torch import nn
 from mjlab.managers.event_manager import RecomputeLevel, requires_model_fields
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactSensor
+from mjlab.tasks.velocity.mdp.velocity_command import (
+  UniformVelocityCommand,
+  UniformVelocityCommandCfg,
+)
+
+
+class CtsTurnCommand(UniformVelocityCommand):
+  """Include pure turning commands so yaw cannot be learned only while walking."""
+
+  cfg: CtsTurnCommandCfg
+
+  def _resample_command(self, env_ids: torch.Tensor) -> None:
+    super()._resample_command(env_ids)
+    eligible = ~(
+      self.is_standing_env[env_ids]
+      | self.is_heading_env[env_ids]
+      | self.is_forward_env[env_ids]
+    )
+    turning = eligible & (
+      torch.rand(len(env_ids), device=self.device) < self.cfg.rel_turn_envs
+    )
+    turn_ids = env_ids[turning]
+    if len(turn_ids) == 0:
+      return
+    self.vel_command_b[turn_ids, :2] = 0.0
+    yaw = self.vel_command_b[turn_ids, 2]
+    min_yaw = min(self.cfg.min_turn_yaw, self.cfg.ranges.ang_vel_z[1])
+    self.vel_command_b[turn_ids, 2] = (
+      torch.where(yaw < 0, -1.0, 1.0) * yaw.abs().clamp_min(min_yaw)
+    )
+    self.time_left[turn_ids] = self.time_left[turn_ids].uniform_(
+      *self.cfg.turn_resampling_time_range
+    )
+
+
+@dataclass(kw_only=True)
+class CtsTurnCommandCfg(UniformVelocityCommandCfg):
+  rel_turn_envs: float = 0.2
+  min_turn_yaw: float = 0.1
+  turn_resampling_time_range: tuple[float, float] = (8.0, 15.0)
+
+  def build(self, env) -> CtsTurnCommand:
+    return CtsTurnCommand(self, env)
 
 
 @requires_model_fields("body_mass", recompute=RecomputeLevel.set_const)

@@ -12,6 +12,7 @@ import torch.nn.functional as F
 
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
+from mjlab.utils.os import get_checkpoint_path
 
 from .rma import HISTORY_LENGTH, AdaptationModule
 from .rma_cfg import unitree_go1_rma_env_cfg, unitree_go1_rma_runner_cfg
@@ -25,6 +26,11 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--steps", type=int, default=32)
   parser.add_argument("--checkpoint", type=Path)
   parser.add_argument("--output", type=Path)
+  parser.add_argument(
+    "--resume",
+    action="store_true",
+    help="Resume teacher training from the latest checkpoint in --output.",
+  )
   parser.add_argument(
     "--device", default="cuda:0" if torch.cuda.is_available() else "cpu"
   )
@@ -43,11 +49,27 @@ def train_teacher(args: argparse.Namespace, env: RslRlVecEnvWrapper) -> None:
   if args.iterations is not None:
     cfg.max_iterations = args.iterations
   cfg.num_steps_per_env = args.steps
-  run_dir = args.output or Path("logs/rsl_rl/go1_rma") / datetime.now().strftime(
-    "%Y-%m-%d_%H-%M-%S"
-  )
-  run_dir.mkdir(parents=True, exist_ok=True)
+
+  if args.resume:
+    if args.output is None:
+      raise ValueError(
+        "--resume requires --output pointing to an existing run directory"
+      )
+    run_dir = args.output
+    if not run_dir.is_dir():
+      raise ValueError(f"Run directory does not exist: {run_dir}")
+    resume_path = get_checkpoint_path(run_dir.parent, run_dir.name, "model_.*.pt")
+  else:
+    run_dir = args.output or Path("logs/rsl_rl/go1_rma") / datetime.now().strftime(
+      "%Y-%m-%d_%H-%M-%S"
+    )
+    run_dir.mkdir(parents=True, exist_ok=True)
+    resume_path = None
+
   runner = MjlabOnPolicyRunner(env, asdict(cfg), str(run_dir), args.device)
+  if resume_path is not None:
+    print(f"Resuming teacher training from checkpoint: {resume_path}")
+    runner.load(str(resume_path), map_location=args.device)
   runner.learn(cfg.max_iterations, init_at_random_ep_len=True)
   print(f"Teacher checkpoints: {run_dir}")
 

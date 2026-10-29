@@ -33,6 +33,7 @@ from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 from mjlab.terrains import BoxPyramidStairsTerrainCfg, HfPyramidSlopedTerrainCfg
 
 from .cts import (
+  CtsTurnCommandCfg,
   feet_regulation,
   linear_velocity_error_l2,
   randomize_trunk_payload,
@@ -40,6 +41,7 @@ from .cts import (
   student_group_mask,
   track_yaw_velocity,
 )
+from .amp_events import reset_from_amp_reference
 from .mob import BehaviorCommandCfg, body_height_error, mob_reward, phase_clock
 from .mob_curriculum import GridAdaptiveVelocityCommandCfg
 
@@ -407,6 +409,13 @@ def unitree_go1_cts_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   if not play:
     twist_cmd = cfg.commands["twist"]
     assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+    cfg.commands["twist"] = CtsTurnCommandCfg(
+      **{
+        field.name: deepcopy(getattr(twist_cmd, field.name))
+        for field in fields(UniformVelocityCommandCfg)
+      }
+    )
+    twist_cmd = cfg.commands["twist"]
     twist_cmd.rel_standing_envs = 0.1
     twist_cmd.rel_heading_envs = 0.1
     twist_cmd.rel_forward_envs = 0.1
@@ -690,4 +699,16 @@ def unitree_go1_amp_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["upright"].weight = 0.2
   cfg.rewards["action_rate_l2"].weight = -0.05
   cfg.rewards["foot_slip"].weight = -0.05
+  if not play:
+    # Reference state initialization gives the policy examples of valid Trot states
+    # during early exploration. The existing reset terms run first; this term then
+    # replaces half of those default states with randomly sampled reference frames.
+    cfg.events["amp_reference_state_init"] = EventTermCfg(
+      mode="reset",
+      func=reset_from_amp_reference,
+      params={
+        "reference_path": "logs/amp/mob_reference/trot",
+        "probability": 0.5,
+      },
+    )
   return cfg
