@@ -1,19 +1,20 @@
 # go1-tasks
 
 本项目将多种四足机器人强化学习方法移植到 MuJoCo/mjlab 的
-Unitree Go1 任务中，并提供平地、崎岖地形速度跟踪基线。运行所需的 `mjlab`
-框架随仓库打包；克隆后无需额外下载源码即可安装、训练与播放。包含五个注册
-任务和一套 RMA 两阶段训练流程：
+Unitree Go1 和 Go2 任务中，并提供平地、崎岖地形速度跟踪基线。运行所需的 `mjlab`
+框架随仓库打包；克隆后无需额外下载源码即可安装、训练与播放。项目包含
+`rough`、`flat`、`mob`、`amp`、`cts` 五个任务，Go1 和 Go2 各有独立的任务 ID，
+并额外提供一套 Go1 RMA 两阶段训练流程。
 
-| key | 包内任务 ID | 说明 |
-| --- | --- | --- |
-| `rough` | `Go1-Velocity-Rough` | 崎岖地形速度跟踪基线 |
-| `flat` | `Go1-Velocity-Flat` | 平地速度跟踪基线 |
-| `mob` | `Go1-Velocity-MoB` | Walk These Ways 启发的多行为步态策略 |
-| `amp` | `Go1-Velocity-AMP` | 使用 MoB 参考动作的对抗模仿训练 |
-| `cts` | `Go1-Velocity-CTS` | CTS 启发的并发师生策略 |
+| key | Go1 任务 ID | Go2 任务 ID | 说明 |
+| --- | --- | --- | --- |
+| `rough` | `Go1-Velocity-Rough` | `Go2-Velocity-Rough` | 崎岖地形速度跟踪基线 |
+| `flat` | `Go1-Velocity-Flat` | `Go2-Velocity-Flat` | 平地速度跟踪基线 |
+| `mob` | `Go1-Velocity-MoB` | `Go2-Velocity-MoB` | 多行为步态策略 |
+| `amp` | `Go1-Velocity-AMP` | `Go2-Velocity-AMP` | 对抗动作先验 |
+| `cts` | `Go1-Velocity-CTS` | `Go2-Velocity-CTS` | 并发师生策略 |
 
-RMA 使用独立的 `go1-train-rma` 命令训练 teacher 和 adaptation module，
+Go1 RMA 使用独立的 `go1-train-rma` 命令训练 teacher 和 adaptation module，
 不注册为普通 PPO 任务 ID。
 
 ## 论文与复现范围
@@ -24,22 +25,23 @@ RMA 使用独立的 `go1-train-rma` 命令训练 teacher 和 adaptation module�
 | Margolis & Agrawal, [*Walk These Ways: Tuning Robot Control for Generalization with Multiplicity of Behavior* (2023)](https://proceedings.mlr.press/v205/margolis23a.html) | `mob` | 用行为命令调节步态、姿态和摆腿参数，并训练条件化速度跟踪策略。 |
 | Wang et al., [*CTS: Concurrent Teacher-Student Reinforcement Learning for Legged Locomotion* (2024)](https://arxiv.org/abs/2405.10830) | `cts` | 在同一 PPO 训练过程中并发训练特权信息教师和本体感觉历史学生。 |
 
-`rough` 和 `flat` 是本项目的 Go1 速度跟踪基线，不单独声称复现某篇论文。
+`rough` 和 `flat` 是本项目的 Go1/Go2 速度跟踪基线，不单独声称复现某篇论文。
 `rma`、`mob` 与 `cts` 复现的是上述论文的**核心思路**，并非逐项复现原作者的仿真器、
 全部网络与奖励细节、训练设置、实验指标或真机结果。本仓库使用 MuJoCo/mjlab
-及自己的 Go1 配置，需要重新训练和评估，不能直接沿用论文报告的性能数字。
+及自己的 Go1/Go2 配置，需要重新训练和评估，不能直接沿用论文报告的性能数字。
 具体实现、与论文的差异及使用方法见 [`docs/rma.md`](docs/rma.md)、
 [`docs/mob.md`](docs/mob.md) 和 [`docs/cts.md`](docs/cts.md)。
 
 项目结构：
 
-- `src/go1_tasks/`：Go1 任务定义（环境配置、RMA、CTS、MoB、奖励与课程）。
+- `src/go1_tasks/`：Go1 任务以及当前两款机器人复用的算法实现。
+- `src/go2_tasks/`：Go2 任务、机器人 profile 与自包含 Go2 资产。
 - `framework/mjlab/`：面向本项目裁剪的 `mjlab` 框架，只保留通用仿真、
   环境、地形、传感器、RL 组件和 Unitree Go1 资产；以 uv workspace 成员的
   形式随本项目一起安装。
 - `vendor/mujoco_warp/`：vendored 的 `mujoco-warp` 源码，安装时不依赖
   GitHub 拉取。
-- `sim2sim/`：独立 MuJoCo 推理场景、Go1 模型、地形资源与部署测试。
+- `sim2sim/`：独立 MuJoCo 推理场景、Go1/Go2 模型、地形资源与部署测试。
 - `docs/`、`tests/`：文档与训练任务测试。
 
 ## 克隆与安装
@@ -52,10 +54,11 @@ git clone https://github.com/OWNER/go1-tasks.git go1-tasks
 cd go1-tasks
 uv sync --locked
 uv run go1-list-tasks
+uv run go2-list-tasks
 ```
 
-`uv sync` 会创建 `.venv`、解析并安装全部依赖，并把 `mjlab` 与 `go1_tasks`
-两个包以可编辑方式安装进去。Linux 默认使用 CUDA 12.8 的 torch；若只需 CPU，
+`uv sync` 会创建 `.venv`、解析并安装全部依赖，并把 `mjlab`、`go1_tasks` 和
+`go2_tasks` 以可编辑方式安装进去。Linux 默认使用 CUDA 12.8 的 torch；若只需 CPU，
 把 `pyproject.toml` 里的
 
 ```toml
@@ -66,21 +69,25 @@ torch = { index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }
 
 ## 任务 ID
 
-本项目同时注册两套 ID：
+本项目为 Go1 注册两套 ID，Go2 只注册包内 ID：
 
-- 历史 ID（`Mjlab-Velocity-Rough/Flat/MoB/CTS-Unitree-Go1`）——由本包注册；
-- 包内 ID（`Go1-Velocity-Rough/Flat/MoB/AMP/CTS`）——始终可用。
+- Go1 历史 ID（`Mjlab-Velocity-Rough/Flat/MoB/CTS-Unitree-Go1`）——由
+  `go1_tasks` 注册；
+- 包内 ID（`Go1-Velocity-*`、`Go2-Velocity-*`）——始终可用。
 
-AMP 只注册包内 ID，其余四项也有对应的历史 ID。
+Go1 AMP 只注册包内 ID，其余四项也有对应的历史 ID；Go2 的五个任务都使用
+`Go2-Velocity-*`。
 
 已有历史 ID 与对应包内 ID 指向同一份配置。查看当前生效的 ID：
 
 ```bash
 uv run go1-list-tasks
+uv run go2-list-tasks
 ```
 
 各任务 checkpoint 分别存放在 `logs/rsl_rl/go1_velocity`、`go1_mob`、
-`go1_amp`、`go1_cts`、`go1_rma`；已有任务的 checkpoint 路径不变。
+`go1_amp`、`go1_cts`、`go1_rma` 和 `go2_rough`、`go2_flat`、`go2_mob`、
+`go2_amp`、`go2_cts`；已有任务的 checkpoint 路径不变。
 
 ## 训练与播放
 
@@ -89,10 +96,37 @@ uv run go1-train Go1-Velocity-Rough --env.scene.num-envs 1024
 uv run go1-play Go1-Velocity-Rough \
   --checkpoint-file logs/rsl_rl/go1_velocity/YOUR_RUN/model_1000.pt \
   --viewer viser
+
+uv run go2-train Go2-Velocity-Rough --env.scene.num-envs 1024
+uv run go2-play Go2-Velocity-Rough \
+  --checkpoint-file logs/rsl_rl/go2_rough/YOUR_RUN/model_1000.pt \
+  --viewer viser
 ```
 
+Go2 AMP 使用 `logs/amp/go2_reference` 下的 Go2 MPC/WBC 参考动作（Trot、Flying
+Trot、Pace、Dynamic/Static Walk 与左右转向），不能复用 Go1 的参考数据。
+参考动作的采集、转换与校验见 [`docs/go2.md`](docs/go2.md)。Go2 的固定关节顺序、
+电机限制、策略 I/O 与实机安全要求也见该文档。
+
+## Go2 任务
+
+Go2 任务位于 `src/go2_tasks/`，使用用户提供的 `go2_description` 自包含 MJCF，
+不沿用 Go1 的机器人常量：
+
+- 模型总质量约 15.2 kg；质量/惯量、关节限位、armature 和被动阻尼取自源
+  MJCF/URDF；训练采用 RobotLab Go2 的 12 关节 DC 电机限幅 `23.5 Nm` 和
+  空载速度 `30 rad/s`。源 MJCF 的 hip/thigh/calf 上限分别为
+  `23.7/23.7/45.43 Nm`，与训练限幅分开记录。
+- 策略 I/O 关节顺序固定为 `FR, FL, RR, RL`；默认姿态
+  `[0.0, 0.8, -1.5]`，初始机身高度 `0.38 m`，动作尺度
+  `[0.125, 0.25, 0.25]`，PD 增益 `Kp=25, Kd=0.5`。
+- 控制周期 50 Hz。Flat 观测为 48 维；CTS/AMP 的部署 actor 不使用机体系
+  线速度，为 45 维。实机端需要提供线速度估计或改用 45 维策略。
+- `sim2sim/go2_sim.py` 用同一份模型；测试校验其常量与训练和部署约定一致，
+  在独立 MuJoCo 引擎中验证 48 维 Flat 策略。
+
 框架自带的 `train` / `play` 等命令也一并安装，并通过 `mjlab.tasks` 入口点
-自动加载本包，因此也能直接使用：
+自动加载 `go1` 与 `go2` 两个任务包，因此也能直接使用：
 
 ```bash
 uv run train Mjlab-Velocity-Rough-Unitree-Go1 --env.scene.num-envs 1024
@@ -106,7 +140,7 @@ uv run train Mjlab-Velocity-Rough-Unitree-Go1 --env.scene.num-envs 1024
 [`docs/amp_mob_collection.md`](docs/amp_mob_collection.md)；逐文件的原理与代码
 讲解见 [`docs/amp_code_tutorial.md`](docs/amp_code_tutorial.md)。
 
-## RMA 两阶段训练
+## Go1 RMA 两阶段训练
 
 RMA 先训练能读取仿真特权参数的 teacher，再冻结 teacher，用最近 50 帧
 本体感觉观测训练 adaptation module。teacher 的策略输入由 48 维本体感觉和
@@ -240,7 +274,7 @@ teacher 与 adapter 必须来自同一训练组合；加载器会检查 adapter 
 
 实现细节和与原论文的差异见 [`docs/rma.md`](docs/rma.md)。
 
-## CTS 评估
+## Go1 CTS 评估
 
 ```bash
 uv run go1-eval-cts /path/to/model_5000.pt --vx 0.5 --seconds 5
@@ -260,8 +294,9 @@ uv run pytest
 
 `tests/test_go1_constants.py` 校验 Go1 资产参数，`tests/test_go1_rma.py`、
 `tests/test_go1_cts.py` 与 `tests/test_go1_mob.py` 校验任务配置与算法契约，
-`tests/test_training_logging.py` 校验训练日志依赖的兼容性。
-sim2sim 的场景和推理接口可运行：
+`tests/test_go2_tasks.py` 校验 Go2 资产、关节顺序、力矩限制、任务注册与环境
+接口，`tests/test_training_logging.py` 校验训练日志依赖的兼容性。
+sim2sim 的场景和推理接口（包括 Go2 部署常量与训练资产的一致性）可运行：
 
 ```bash
 PYTHONPATH=sim2sim uv run python -m unittest discover -s sim2sim/tests
@@ -274,12 +309,24 @@ PYTHONPATH=sim2sim uv run python -m unittest discover -s sim2sim/tests
 
 ```bash
 uv run python sim2sim/go1_sim.py --headless --steps 100
+uv run python sim2sim/go2_sim.py --headless --steps 100
 ```
 
-本仓库训练的 Flat（48 维观测）和 MoB（1710 维观测）检查点有对应推理脚本；
-当前 Rough（235 维观测）和 CTS 检查点不支持直接运行。由本仓库
-`go1-train-rma` 生成的 RMA teacher/adapter 检查点可由 `go1_sim.py` 加载。
-命令、控制方式和检查点约定见 [sim2sim/README.md](sim2sim/README.md)。
+本仓库训练的 Flat（Go1/Go2 均为 48 维观测）和 Go1 MoB（1710 维观测）
+检查点有对应推理脚本；当前 Rough（235 维观测）和 CTS 检查点不支持直接运行。
+由本仓库 `go1-train-rma` 生成的 RMA teacher/adapter 检查点可由 `go1_sim.py`
+加载。Go2 的检查点由 `go2_sim.py` 加载：
+
+```bash
+uv run python sim2sim/go2_sim.py \
+  --policy logs/rsl_rl/go2_flat/YOUR_RUN/model_9999.pt \
+  --terrain flat
+```
+
+`go2_sim.py` 复用训练用 Go2 MJCF；测试核对它与 `go2_tasks.deployment` 中的
+关节顺序、默认姿态、动作尺度、PD 增益和力矩限制，用来在独立的 MuJoCo 引擎中
+验证策略接口；它不导入 `mjlab`。命令、控制方式和检查点约定见
+[sim2sim/README.md](sim2sim/README.md)。
 
 ## 许可与第三方代码
 

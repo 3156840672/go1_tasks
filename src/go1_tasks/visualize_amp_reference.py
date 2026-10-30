@@ -34,9 +34,10 @@ def _load_clip(path: Path) -> dict[str, np.ndarray]:
   return clip
 
 
-def _skeleton_frames(clip: dict[str, np.ndarray], indices: np.ndarray) -> np.ndarray:
+def _skeleton_frames(
+  clip: dict[str, np.ndarray], indices: np.ndarray, model: mujoco.MjModel
+) -> np.ndarray:
   """Return (frames, 4 legs, 4 points, xyz) in root-centered world coordinates."""
-  model = mujoco.MjModel.from_xml_path(str(GO1_XML))
   data = mujoco.MjData(model)
   names = [str(name) for name in clip["joint_names"]]
   joint_addresses = [model.joint(name).qposadr[0] for name in names]
@@ -62,6 +63,10 @@ def main() -> None:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("clip", type=Path, help="Collected clip_*.npz file")
   parser.add_argument(
+    "--robot", choices=("go1", "go2"), default="go1",
+    help="Robot model used for forward kinematics",
+  )
+  parser.add_argument(
     "--output", type=Path, default=Path("logs/amp/reference_preview.gif")
   )
   parser.add_argument("--start", type=float, default=0.0, help="Start time in seconds")
@@ -71,6 +76,12 @@ def main() -> None:
   if args.start < 0 or args.seconds <= 0 or args.fps <= 0:
     parser.error("--start must be nonnegative; --seconds and --fps must be positive")
   clip = _load_clip(args.clip)
+  if args.robot == "go1":
+    model = mujoco.MjModel.from_xml_path(str(GO1_XML))
+  else:
+    from go2_tasks.robots.go2 import get_spec
+
+    model = get_spec().compile()
   source_fps = float(clip["fps"])
   start = round(args.start * source_fps)
   stop = min(
@@ -81,7 +92,7 @@ def main() -> None:
     parser.error("Requested time range contains fewer than two reference frames")
   count = max(2, round((stop - start) / source_fps * args.fps) + 1)
   indices = np.unique(np.rint(np.linspace(start, stop, count)).astype(int))
-  frames = _skeleton_frames(clip, indices)
+  frames = _skeleton_frames(clip, indices, model)
   times = np.arange(len(clip["root_pos_w"])) / source_fps
   foot_z = clip["foot_pos_w"][:, :, 2]
 

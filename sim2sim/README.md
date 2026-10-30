@@ -1,9 +1,11 @@
-# Go1 sim2sim
+# Quadruped sim2sim
 
-本目录随 `go1-tasks` 一起发布，在独立的 MuJoCo 场景中运行 Go1 策略；
-推理脚本不导入 `mjlab` 或 `rsl_rl`。支持本仓库的 `Go1-Velocity-Flat`
-和 `Go1-Velocity-MoB` 检查点，以及本仓库训练的 48 维 RMA teacher/adapter。
-**当前 `Go1-Velocity-Rough` 的 235 维高度扫描策略与 CTS 策略不受这些脚本支持。**
+本目录随 `go1-tasks` 一起发布，在独立的 MuJoCo 场景中运行 Go1 和 Go2
+策略；推理脚本不导入 `mjlab` 或 `rsl_rl`。Go1 支持本仓库的
+`Go1-Velocity-Flat` 和 `Go1-Velocity-MoB` 检查点，以及本仓库训练的 48 维
+RMA teacher/adapter；Go2 支持 `Go2-Velocity-Flat` 的 48 维检查点和
+`Go2-Velocity-AMP` 的 45 维检查点。
+**当前 Go1/Go2 的 Rough 高度扫描策略与 CTS 策略不受这些脚本支持。**
 本仓库不附带训练检查点。
 
 RMA 检查点可通过根目录的 `go1-train-rma` 两阶段流程训练，详见
@@ -16,6 +18,7 @@ PyTorch 和本目录的 Go1 模型文件。
 cd go1-tasks
 uv sync --locked
 uv run python sim2sim/go1_sim.py --headless --steps 100
+uv run python sim2sim/go2_sim.py --headless --steps 100
 ```
 
 不提供检查点时，机器人保持默认站姿。已有兼容的 RMA 两阶段检查点时运行：
@@ -48,6 +51,39 @@ uv run python sim2sim/go1_sim.py \
 
 在仓库根目录运行 `PYTHONPATH=sim2sim uv run python -m unittest discover -s sim2sim/tests`，
 可以在没有训练好策略的情况下检查场景和推理接口。
+
+## Go2 Flat/AMP 策略（48/45 维观测）
+
+Go2 训练任务与 Go1 共享算法，但使用独立的 Go2 MJCF、关节顺序
+`FR, FL, RR, RL`、默认姿态 `[0, 0.8, -1.5]`、动作尺度
+`[0.125, 0.25, 0.25]`、PD 增益 `Kp=25, Kd=0.5`、初始机身高度 `0.38 m`
+及 RobotLab 风格的 DC 电机限幅 `23.5 Nm`、空载速度 `30 rad/s`。源 Go2
+MJCF 的 hip/thigh/calf 上限 `23.7/23.7/45.43 Nm` 与训练限幅不同。测试会同时
+校验训练资产、部署常量与 sim2sim 常量。
+
+```bash
+uv run python sim2sim/go2_sim.py \
+  --policy logs/rsl_rl/go2_flat/YOUR_RUN/model_9999.pt \
+  --terrain flat
+```
+
+AMP 检查点使用同一个运行程序，程序会从网络第一层自动识别 45 维观测，
+并从 Flat 的 48 维观测中移除机身线速度：
+
+```bash
+uv run python sim2sim/go2_sim.py \
+  --policy logs/rsl_rl/go2_amp/YOUR_RUN/model_9999.pt \
+  --terrain flat \
+  --command 0 0 0.5
+```
+
+Go2 指令范围与训练一致：前后 `[-1, 1] m/s`、横向 `[-0.6, 0.6] m/s`、
+偏航角速度 `[-1, 1] rad/s`。无窗口模式会输出后半段仿真的平均
+`vx/vy/wz` 和绝对跟踪误差，可用于快速比较不同 AMP 检查点。
+
+无检查点时运行 `--headless --steps 100` 只验证模型、地形、执行器与观测接口，
+机器人保持被动站姿。Go2 Rough 的 235 维高度扫描策略和 CTS 策略目前不受
+`go2_sim.py` 支持。键盘与手柄操作与 `go1_sim.py` 相同。
 
 ## MoB 策略（1710 维观测）
 

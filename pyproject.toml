@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "go1-tasks"
 version = "0.1.0"
-description = "Unitree Go1 velocity, MoB and CTS tasks for mjlab."
+description = "Unitree Go1 and Go2 locomotion tasks for mjlab."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = "Apache-2.0"
@@ -19,6 +19,9 @@ dependencies = [
 ]
 
 [project.scripts]
+go2-train = "go2_tasks.cli:train"
+go2-play = "go2_tasks.cli:play"
+go2-list-tasks = "go2_tasks.cli:list_go2_tasks"
 go1-train = "go1_tasks.cli:train"
 go1-play = "go1_tasks.cli:play"
 go1-eval-cts = "go1_tasks.cli:eval_cts"
@@ -27,6 +30,7 @@ go1-list-tasks = "go1_tasks.cli:list_go1_tasks"
 
 [project.entry-points."mjlab.tasks"]
 go1 = "go1_tasks"
+go2 = "go2_tasks"
 
 [dependency-groups]
 dev = [
@@ -61,6 +65,10 @@ mjlab = { workspace = true }
 warp-lang = { index = "nvidia", marker = "sys_platform != 'darwin'" }
 torch = { index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }
 mujoco-warp = { path = "vendor/mujoco_warp" }
+
+[tool.uv.build-backend]
+module-name = ["go1_tasks", "go2_tasks"]
+module-root = "src"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

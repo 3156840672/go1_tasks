@@ -33,7 +33,6 @@ from mjlab.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 from mjlab.terrains import BoxPyramidStairsTerrainCfg, HfPyramidSlopedTerrainCfg
 
 from .cts import (
-  CtsTurnCommandCfg,
   feet_regulation,
   linear_velocity_error_l2,
   randomize_trunk_payload,
@@ -409,13 +408,6 @@ def unitree_go1_cts_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   if not play:
     twist_cmd = cfg.commands["twist"]
     assert isinstance(twist_cmd, UniformVelocityCommandCfg)
-    cfg.commands["twist"] = CtsTurnCommandCfg(
-      **{
-        field.name: deepcopy(getattr(twist_cmd, field.name))
-        for field in fields(UniformVelocityCommandCfg)
-      }
-    )
-    twist_cmd = cfg.commands["twist"]
     twist_cmd.rel_standing_envs = 0.1
     twist_cmd.rel_heading_envs = 0.1
     twist_cmd.rel_forward_envs = 0.1

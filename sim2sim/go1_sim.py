@@ -163,12 +163,14 @@ class Joystick:
       directions.add("down")
     return directions
 
-  def command(self) -> np.ndarray | None:
+  def command(
+    self, scale: tuple[float, float, float] = (1.0, 1.0, 0.5)
+  ) -> np.ndarray | None:
     if self.fd is None:
       return None
     values = np.array([-self.axes[1], -self.axes[0], -self.axes[3]], dtype=np.float32)
     values[np.abs(values) < 0.05] = 0
-    return values * np.array([1.0, 1.0, 0.5], dtype=np.float32)
+    return values * np.asarray(scale, dtype=np.float32)
 
   def close(self) -> None:
     if self.fd is not None:

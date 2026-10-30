@@ -1,4 +1,4 @@
-"""Inference-only Go1 RMA networks; no mjlab or rsl_rl dependency."""
+"""Inference-only flat velocity networks; no mjlab or rsl_rl dependency."""
 
 from __future__ import annotations
 
@@ -31,11 +31,14 @@ class Actor(nn.Module):
 
 
 class StandardActor(nn.Module):
-  """Proprioceptive actor used by the Go1 flat velocity task."""
+  """Proprioceptive actor used by the flat velocity tasks."""
 
-  def __init__(self, hidden_dims: tuple[int, ...]) -> None:
+  def __init__(
+    self, hidden_dims: tuple[int, ...], obs_dim: int = OBS_DIM
+  ) -> None:
     super().__init__()
-    dims = (OBS_DIM, *hidden_dims, ACTION_DIM)
+    self.obs_dim = obs_dim
+    dims = (obs_dim, *hidden_dims, ACTION_DIM)
     layers: list[nn.Module] = []
     for index, (input_dim, output_dim) in enumerate(zip(dims, dims[1:])):
       layers.append(nn.Linear(input_dim, output_dim))
@@ -86,7 +89,9 @@ def load_policy(teacher_path: Path, adapter_path: Path) -> tuple[Actor, Adapter]
   return actor.eval(), adapter.eval()
 
 
-def load_standard_policy(checkpoint_path: Path) -> StandardActor:
+def load_standard_policy(
+  checkpoint_path: Path, supported_obs_dims: tuple[int, ...] = (OBS_DIM,)
+) -> StandardActor:
   checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
   state = checkpoint["actor_state_dict"]
   weight_keys = sorted(
@@ -97,15 +102,15 @@ def load_standard_policy(checkpoint_path: Path) -> StandardActor:
     raise ValueError("Checkpoint does not contain a feed-forward actor MLP")
   input_dim = state[weight_keys[0]].shape[1]
   output_dim = state[weight_keys[-1]].shape[0]
-  if input_dim != OBS_DIM:
+  if input_dim not in supported_obs_dims:
     raise ValueError(
       f"Policy expects {input_dim} observations; this runner supports the "
-      f"new {OBS_DIM}-observation policy without height scan"
+      f"following observation dimensions: {supported_obs_dims}"
     )
   if output_dim != ACTION_DIM:
     raise ValueError(f"Policy outputs {output_dim} actions, expected {ACTION_DIM}")
   hidden_dims = tuple(state[key].shape[0] for key in weight_keys[:-1])
-  actor = StandardActor(hidden_dims)
+  actor = StandardActor(hidden_dims, obs_dim=input_dim)
   actor.load_state_dict(
     {key: value for key, value in state.items() if key.startswith("mlp.")}
   )

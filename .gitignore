@@ -10,7 +10,13 @@ __pycache__/
 .mypy_cache/
 build/
 dist/
-logs/
+# Keep generated runs and raw recordings local, but version the small final
+# Go2 AMP dataset required for a fresh checkout to train successfully.
+logs/*
+!logs/amp/
+logs/amp/*
+!logs/amp/go2_reference/
+!logs/amp/go2_reference/**
 wandb/
 *.mp4
 .DS_Store

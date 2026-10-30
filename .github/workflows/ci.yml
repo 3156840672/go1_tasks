@@ -19,8 +19,8 @@ jobs:
 
       - name: Smoke import (entry-point auto-load)
         run: |
-          uv run python -c "import mjlab.tasks; from mjlab.tasks.registry import list_tasks; assert 'Go1-Velocity-CTS' in list_tasks(); assert 'Mjlab-Velocity-CTS-Unitree-Go1' in list_tasks()"
-          uv run list-envs --keyword Go1
+          uv run python -c "import mjlab.tasks; from mjlab.tasks.registry import list_tasks; tasks = list_tasks(); assert 'Go1-Velocity-CTS' in tasks; assert 'Mjlab-Velocity-CTS-Unitree-Go1' in tasks; assert 'Go2-Velocity-Flat' in tasks"
+          uv run list-envs --keyword Go
 
       - name: Run tests
         run: uv run pytest -q
@@ -29,3 +29,4 @@ jobs:
         run: |
           PYTHONPATH=sim2sim uv run python -m unittest discover -s sim2sim/tests
           uv run python sim2sim/go1_sim.py --headless --steps 100
+          uv run python sim2sim/go2_sim.py --headless --steps 100
