@@ -18,3 +18,9 @@ def play() -> None:
 def list_go2_tasks() -> None:
   for key, task_id in go2_tasks.TASK_IDS.items():
     print(f"{key:6s} {task_id}")
+
+
+def train_paper_amp_student() -> None:
+  from .train_paper_amp import main
+
+  main()

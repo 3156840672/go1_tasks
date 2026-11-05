@@ -26,7 +26,14 @@ def main() -> None:
   parser.add_argument("path", type=Path, nargs="?",
                       default=Path("logs/amp/go2_reference"))
   parser.add_argument("--allow-partial", action="store_true")
+  parser.add_argument("--expected-seconds", type=float, default=4.5)
+  parser.add_argument("--stand-seconds", type=float, default=None,
+                      help="Optional different duration for stand clips")
   args = parser.parse_args()
+  if args.expected_seconds <= 0:
+    parser.error("--expected-seconds must be positive")
+  if args.stand_seconds is not None and args.stand_seconds <= 0:
+    parser.error("--stand-seconds must be positive")
   paths = sorted(args.path.rglob("*.npz"))
   if not paths:
     parser.error(f"No NPZ clips under {args.path}")
@@ -54,8 +61,14 @@ def main() -> None:
       n = len(clip["root_pos_w"])
       if names != model_joints or feet != FEET or not np.isclose(fps, 50.0):
         raise ValueError(f"{path}: robot names or FPS differ from Go2 AMP")
-      if n != 226:
-        raise ValueError(f"{path}: expected 226 frames (4.5 s), got {n}")
+      seconds = (args.stand_seconds if path.parent.name == "stand"
+                 and args.stand_seconds is not None else args.expected_seconds)
+      expected_frames = round(seconds * fps) + 1
+      if n != expected_frames:
+        raise ValueError(
+          f"{path}: expected {expected_frames} frames "
+          f"({seconds:g} s), got {n}"
+        )
       if any(not np.isfinite(clip[key]).all() for key in required if key in clip.files
              and np.issubdtype(clip[key].dtype, np.number)):
         raise ValueError(f"{path}: nonfinite values")

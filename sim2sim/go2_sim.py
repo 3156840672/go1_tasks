@@ -18,7 +18,12 @@ import numpy as np
 import torch
 
 from go1_sim import Joystick
-from rma_policy import ACTION_DIM, OBS_DIM, load_standard_policy
+from rma_policy import (
+  ACTION_DIM,
+  OBS_DIM,
+  load_paper_amp_student,
+  load_standard_policy,
+)
 from terrain import TERRAIN_MODES, add_terrain
 
 ROOT = Path(__file__).resolve().parent
@@ -112,6 +117,7 @@ class Simulator:
     policy: Path | None = None,
     terrain: str = "flat",
     terrain_seed: int = 42,
+    student: Path | None = None,
   ) -> None:
     self.model = make_model(terrain, terrain_seed)
     self.data = mujoco.MjData(self.model)
@@ -146,11 +152,15 @@ class Simulator:
     assert all(
       i >= 0 for i in (*self.qadr, *self.vadr, *self.aid, self.lin_id, self.ang_id)
     )
-    self.policy = (
-      load_standard_policy(policy, supported_obs_dims=(AMP_OBS_DIM, OBS_DIM))
-      if policy is not None
-      else None
-    )
+    if policy is not None and student is not None:
+      raise ValueError("Use either a feed-forward --policy or an LSTM --student")
+    self.policy = None
+    if policy is not None:
+      self.policy = load_standard_policy(
+        policy, supported_obs_dims=(AMP_OBS_DIM, OBS_DIM)
+      )
+    elif student is not None:
+      self.policy = load_paper_amp_student(student)
     self.command = np.zeros(3, dtype=np.float32)
     self.active = False
     self.last_action = np.zeros(ACTION_DIM, dtype=np.float32)
@@ -164,6 +174,8 @@ class Simulator:
     self.data.ctrl[self.aid] = 0
     self.last_action.fill(0)
     self.target = DEFAULT.copy()
+    if self.policy is not None and hasattr(self.policy, "reset"):
+      self.policy.reset()
     mujoco.mj_forward(self.model, self.data)
 
   def set_active(self, active: bool) -> None:
@@ -239,6 +251,11 @@ def main() -> None:
     type=Path,
     help="45-D AMP or 48-D Flat model_*.pt checkpoint",
   )
+  parser.add_argument(
+    "--student",
+    type=Path,
+    help="Paper AMP LSTM student_*.pt checkpoint",
+  )
   parser.add_argument("--headless", action="store_true")
   parser.add_argument(
     "--steps", type=int, default=1000, help="Physics steps in headless mode"
@@ -260,7 +277,14 @@ def main() -> None:
     parser.error("--steps must be positive")
   if any(abs(v) > limit for v, limit in zip(args.command, COMMAND_LIMITS)):
     parser.error("--command limits: |vx| <= 1.0; |vy| <= 0.6; |wz| <= 1.0")
-  sim = Simulator(args.policy, args.terrain, args.terrain_seed)
+  if args.policy is not None and args.student is not None:
+    parser.error("Use either --policy or --student")
+  sim = Simulator(
+    policy=args.policy,
+    terrain=args.terrain,
+    terrain_seed=args.terrain_seed,
+    student=args.student,
+  )
   keyboard_command = np.array(args.command, dtype=np.float32)
   sim.command[:] = keyboard_command
   joystick = Joystick(args.joystick if not args.headless else "")

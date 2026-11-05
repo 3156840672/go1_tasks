@@ -12,6 +12,9 @@ from mjlab.utils.lab_api.math import quat_apply_inverse
 FOOT_NAMES = ("FR", "FL", "RR", "RL")
 FRAME_DIM = 46
 TRANSITION_DIM = 2 * FRAME_DIM
+PAPER_FRAME_DIM = 31
+PAPER_TRANSITION_DIM = 2 * PAPER_FRAME_DIM
+AMP_STATE_MODES = ("extended", "paper")
 REQUIRED_FIELDS = (
   "root_pos_w",
   "root_quat_w",
@@ -41,11 +44,15 @@ def amp_frame(
   joint_pos: torch.Tensor,
   joint_vel: torch.Tensor,
   foot_pos_w: torch.Tensor,
+  root_height: torch.Tensor | None = None,
+  *,
+  state_mode: str = "extended",
 ) -> torch.Tensor:
-  """Build (N, 46) AMP states from (N, ...) tensors in a fixed joint order.
+  """Build AMP states from (N, ...) tensors in a fixed joint order.
 
-  The height assumes flat ground at world z=0. The four feet must be FR, FL,
-  RR, RL. Commands and absolute x/y/yaw are intentionally excluded.
+  ``extended`` is the project's original 46-D state, while ``paper`` is the
+  31-D state from Wu et al.: base height, base linear/angular velocity, joint
+  positions, and joint velocities. Commands and absolute x/y/yaw are excluded.
   """
   n = root_pos_w.shape[0]
   expected = (
@@ -67,9 +74,21 @@ def amp_frame(
   foot_rel_b = quat_apply_inverse(
     root_quat_w[:, None, :].expand(-1, 4, -1), foot_rel_w
   ).reshape(n, 12)
+  if root_height is None:
+    root_height = root_pos_w[:, 2:3]
+  elif root_height.shape != (n, 1):
+    raise ValueError(f"Expected root height shape {(n, 1)}, got {root_height.shape}")
+  if state_mode == "paper":
+    return torch.cat(
+      (joint_pos, joint_vel, root_lin_vel_b, root_ang_vel_b, root_height), dim=-1
+    )
+  if state_mode != "extended":
+    raise ValueError(
+      f"Unknown AMP state mode {state_mode!r}; expected one of {AMP_STATE_MODES}"
+    )
   return torch.cat(
     (
-      root_pos_w[:, 2:3],
+      root_height,
       gravity_b,
       root_lin_vel_b,
       root_ang_vel_b,
@@ -86,6 +105,8 @@ def amp_frame_from_robot(
   *,
   joint_names: tuple[str, ...] | None = None,
   foot_ids: Sequence[int] | None = None,
+  root_height: torch.Tensor | None = None,
+  state_mode: str = "extended",
 ) -> torch.Tensor:
   """Extract the same AMP frame from every environment of a live Go1 robot.
 
@@ -107,6 +128,8 @@ def amp_frame_from_robot(
     data.joint_pos,
     data.joint_vel,
     data.site_pos_w[:, foot_ids],
+    root_height,
+    state_mode=state_mode,
   )
 
 
@@ -123,7 +146,12 @@ class AmpMotionDataset:
     *,
     joint_names: tuple[str, ...] | None = None,
     fps: float | None = None,
+    state_mode: str = "extended",
   ) -> None:
+    if state_mode not in AMP_STATE_MODES:
+      raise ValueError(
+        f"Unknown AMP state mode {state_mode!r}; expected one of {AMP_STATE_MODES}"
+      )
     paths = sorted(Path(path).rglob("*.npz"))
     if not paths:
       raise ValueError(f"No .npz motion clips found under {path}")
@@ -171,13 +199,17 @@ class AmpMotionDataset:
         if names != canonical_joints or not np.isclose(rate, canonical_fps):
           raise ValueError(f"{file_path}: joint order or fps differs from the dataset")
         frame = amp_frame(
-          *(torch.from_numpy(clip[key].astype(np.float32)) for key in REQUIRED_FIELDS)
+          *(torch.from_numpy(clip[key].astype(np.float32)) for key in REQUIRED_FIELDS),
+          state_mode=state_mode,
         )
         transitions.append(torch.cat((frame[:-1], frame[1:]), dim=-1))
     self.transitions = torch.cat(transitions, dim=0)
     self.joint_names = canonical_joints
     self.fps = canonical_fps
     self.num_clips = len(paths)
+    self.state_mode = state_mode
+    self.frame_dim = PAPER_FRAME_DIM if state_mode == "paper" else FRAME_DIM
+    self.transition_dim = 2 * self.frame_dim
 
   def __len__(self) -> int:
     return self.transitions.shape[0]
@@ -185,7 +217,7 @@ class AmpMotionDataset:
   def sample(
     self, batch_size: int, *, device: torch.device | str = "cpu"
   ) -> torch.Tensor:
-    """Return uniformly sampled (batch_size, 92) transitions."""
+    """Return uniformly sampled adjacent-frame transitions."""
     if batch_size < 1:
       raise ValueError("batch_size must be positive")
     indices = torch.randint(len(self), (batch_size,))

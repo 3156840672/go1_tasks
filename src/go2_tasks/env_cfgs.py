@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import math
+from dataclasses import fields
 from copy import deepcopy
 
 from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs import mdp as envs_mdp
+from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.envs.mdp.dr import pseudo_inertia
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
 from mjlab.sensor import ContactMatch, ObjRef, RayCastSensorCfg
 
 from go1_tasks.env_cfgs import (
@@ -28,12 +33,17 @@ from .robots.go2 import (
   THIGH_GEOM_NAMES,
   get_go2_robot_cfg,
 )
+from .paper_amp import paper_privileged_state
+from . import paper_rewards
+from .paper_curriculum import terrain_levels_from_tracking
+from .terrains import CurriculumRandomRoughTerrainCfg
 
 
 GO2_DR_BODY_NAMES = (BASE_BODY_NAME, ".*_hip", ".*_thigh", ".*_calf")
 # Every OCS2 gait category lives below this directory; the AMP reader walks it
 # recursively, so Trot, Flying Trot, the walks, and both turns share one dataset.
 GO2_AMP_REFERENCE_PATH = "logs/amp/go2_reference"
+GO2_PAPER_AMP_REFERENCE_PATH = "logs/amp/go2_paper_reference"
 
 
 def _replace_contact_match(sensor, *, primary=None, secondary=None) -> None:
@@ -181,11 +191,10 @@ def unitree_go2_amp_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["track_angular_velocity"] = deepcopy(
     flat_rewards["track_angular_velocity"]
   )
-  # The default 0.707 rad/s tolerance lets a non-turning policy earn a large
-  # reward throughout [-1, 1]. Use the tighter yaw-tracking tolerance already
-  # proven by the CTS task and balance it with the linear tracking reward.
+  # Match the paper's exp(-yaw_error^2 / 0.15).  Using std=0.25 made the
+  # reward and its gradient nearly zero before the policy learned to turn.
   cfg.rewards["track_angular_velocity"].weight = 2.0
-  cfg.rewards["track_angular_velocity"].params["std"] = 0.25
+  cfg.rewards["track_angular_velocity"].params["std"] = math.sqrt(0.15)
   if "amp_reference_state_init" in cfg.events:
     cfg.events["amp_reference_state_init"].params["reference_path"] = (
       GO2_AMP_REFERENCE_PATH
@@ -193,11 +202,188 @@ def unitree_go2_amp_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   return cfg
 
 
+def unitree_go2_rough_amp_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Create blind single-stage Go2 AMP on curriculum rough terrain."""
+  cfg = unitree_go2_rough_env_cfg(play=play)
+  generator = cfg.scene.terrain.terrain_generator
+  assert generator is not None
+  noise = generator.sub_terrains["random_rough"]
+  generator.sub_terrains["random_rough"] = CurriculumRandomRoughTerrainCfg(
+    **{field.name: getattr(noise, field.name) for field in fields(noise)}
+  )
+  cfg.scene.num_envs = 1 if play else 1024
+  if not play:
+    assert cfg.scene.terrain is not None
+    cfg.scene.terrain.max_init_terrain_level = 0
+
+  # Keep the deployable 45-D actor blind. The critic may use the 187-D terrain
+  # scan during training, which is asymmetric PPO rather than a teacher policy.
+  actor = cfg.observations["actor"]
+  actor.terms.pop("base_lin_vel")
+  actor.terms.pop("height_scan")
+  actor.history_length = 1
+
+  flat_amp = unitree_go2_amp_env_cfg(play=play)
+  cfg.commands["twist"] = deepcopy(flat_amp.commands["twist"])
+  if play:
+    cfg.curriculum.pop("command_vel", None)
+  else:
+    # The recorded OCS2 clips actually cover about 0.25 m/s longitudinal,
+    # 0.19 m/s lateral, and 0.52 rad/s yaw, regardless of the larger values in
+    # their filenames.  Begin inside that support so the discriminator cannot
+    # classify policy samples by speed alone, then expand to the deployable
+    # envelope after the gait has been learned.
+    twist = cfg.commands["twist"]
+    twist.ranges.lin_vel_x = (-0.3, 0.3)
+    twist.ranges.lin_vel_y = (-0.2, 0.2)
+    twist.ranges.ang_vel_z = (-0.55, 0.55)
+    cfg.curriculum["command_vel"].params["velocity_stages"] = [
+      {
+        "step": 0,
+        "lin_vel_x": (-0.3, 0.3),
+        "lin_vel_y": (-0.2, 0.2),
+        "ang_vel_z": (-0.55, 0.55),
+      },
+      {
+        "step": 3500 * 24,
+        "lin_vel_x": (-0.6, 0.6),
+        "lin_vel_y": (-0.4, 0.4),
+        "ang_vel_z": (-0.75, 0.75),
+      },
+      {
+        "step": 6000 * 24,
+        "lin_vel_x": (-1.0, 1.0),
+        "lin_vel_y": (-0.6, 0.6),
+        "ang_vel_z": (-1.0, 1.0),
+      },
+    ]
+
+  # Use the sparse AMP task objective, while retaining rough-terrain-relative
+  # upright/slip terms and safety penalties for non-foot contacts.
+  rough_upright = deepcopy(cfg.rewards["upright"])
+  rough_upright.weight = flat_amp.rewards["upright"].weight
+  rough_slip = deepcopy(cfg.rewards["foot_slip"])
+  rough_slip.weight = flat_amp.rewards["foot_slip"].weight
+  safety_rewards = {
+    name: deepcopy(cfg.rewards[name])
+    for name in ("self_collisions", "shank_collision", "trunk_head_collision")
+  }
+  cfg.rewards = deepcopy(flat_amp.rewards)
+  cfg.rewards["upright"] = rough_upright
+  cfg.rewards["foot_slip"] = rough_slip
+  cfg.rewards.update(safety_rewards)
+
+  # Rough already supplies encoder/COM/friction randomization. Copy the extra
+  # AMP dynamics randomization, gentler periodic push, and reference reset.
+  for name in (
+    "body_inertia_dr",
+    "pd_gains_dr",
+    "joint_friction_dr",
+    "push_robot",
+    "amp_reference_state_init",
+  ):
+    if name in flat_amp.events:
+      cfg.events[name] = deepcopy(flat_amp.events[name])
+  if not play:
+    cfg.events["reset_robot_joints"].params["position_range"] = (-0.1, 0.1)
+    cfg.events["reset_robot_joints"].params["velocity_range"] = (-0.1, 0.1)
+  return cfg
+
+
+def unitree_go2_paper_amp_env_cfg(
+  play: bool = False, *, baseline: bool = False
+) -> ManagerBasedRlEnvCfg:
+  """Rough AMP teacher environment with the paper's 30/187 split inputs.
+
+  ``baseline`` keeps the earlier, proven reward and command-curriculum setup
+  (narrow commands expanding over training, no heading control, flat-AMP
+  regularizers) while retaining the paper teacher observation groups. It is a
+  control experiment for isolating AMP and reward changes from the paper's
+  wide fixed-command envelope.
+  """
+  cfg = unitree_go2_rough_amp_env_cfg(play=play)
+  # Start episodes from the same motion distribution used by the discriminator.
+  if "amp_reference_state_init" in cfg.events:
+    cfg.events["amp_reference_state_init"].params["reference_path"] = (
+      GO2_PAPER_AMP_REFERENCE_PATH
+    )
+  if not baseline:
+    # Table I terms use physical quantities, not normalized policy actions.
+    safety = {name: deepcopy(cfg.rewards[name]) for name in
+              ("self_collisions", "shank_collision", "trunk_head_collision", "dof_pos_limits")}
+    cfg.rewards = {
+      "track_linear_velocity": RewardTermCfg(func=paper_rewards.planar_tracking, weight=1.,
+        params={"command_name":"twist", "std":math.sqrt(.15)}),
+      "track_angular_velocity": RewardTermCfg(func=paper_rewards.yaw_tracking, weight=.5,
+        params={"command_name":"twist", "std":math.sqrt(.15)}),
+      # The per-step four-foot stride term has a -2 standing baseline.
+      # Offset it for alive episodes so shortening an episode is not rewarded.
+      "alive": RewardTermCfg(func=envs_mdp.is_alive, weight=2.),
+      "failure": RewardTermCfg(func=envs_mdp.is_terminated, weight=-2.),
+      "joint_torques": RewardTermCfg(func=envs_mdp.joint_torques_l2, weight=-1e-4),
+      "joint_acceleration": RewardTermCfg(func=envs_mdp.joint_acc_l2, weight=-2.5e-7),
+      "joint_position_change": RewardTermCfg(func=paper_rewards.joint_position_change, weight=-.1),
+      "stride_duration": RewardTermCfg(func=paper_rewards.stride_duration, weight=1.,
+        params={"command_name":"twist", "sensor_name":"feet_ground_contact"}),
+      **safety,
+    }
+  # The deployable observation remains exactly the existing 45-D AMP vector.
+  cfg.observations["privileged"] = ObservationGroupCfg(
+    terms={
+      "state": ObservationTermCfg(func=paper_privileged_state),
+    },
+    concatenate_terms=True,
+    enable_corruption=False,
+  )
+  cfg.observations["terrain"] = ObservationGroupCfg(
+    terms={
+      "height_scan": deepcopy(cfg.observations["critic"].terms["height_scan"]),
+    },
+    concatenate_terms=True,
+    enable_corruption=False,
+  )
+  if not play:
+    # Wu et al. advance terrain difficulty from locomotion performance. The
+    # generic mjlab curriculum uses displacement, which penalizes turning and
+    # lateral commands and can advance after poor velocity tracking.
+    cfg.curriculum["terrain_levels"].func = terrain_levels_from_tracking
+    cfg.curriculum["terrain_levels"].params = {
+      "command_name": "twist",
+      "reward_name": "track_linear_velocity",
+      "promote_threshold": 0.85,
+      "demote_threshold": 0.50,
+      "minimum_command_speed": 0.10,
+    }
+    if not baseline:
+      # Isolate terrain learning from time-driven command expansion.
+      cfg.curriculum.pop("command_vel", None)
+      twist = cfg.commands["twist"]
+      twist.ranges.lin_vel_x = (-1.0, 1.0)
+      twist.ranges.lin_vel_y = (-0.6, 0.6)
+      twist.ranges.ang_vel_z = (-1.0, 1.0)
+      twist.heading_command = True
+      twist.ranges.heading = (-math.pi, math.pi)
+      twist.rel_heading_envs = 1.0
+      twist.resampling_time_range = (20.0, 20.0)
+  return cfg
+
+
+def unitree_go2_paper_amp_baseline_env_cfg(
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Paper teacher observations with the earlier narrow-command baseline."""
+  return unitree_go2_paper_amp_env_cfg(play=play, baseline=True)
+
+
 __all__ = [
   "GO2_AMP_REFERENCE_PATH",
+  "GO2_PAPER_AMP_REFERENCE_PATH",
   "unitree_go2_amp_env_cfg",
   "unitree_go2_cts_env_cfg",
   "unitree_go2_flat_env_cfg",
   "unitree_go2_mob_env_cfg",
+  "unitree_go2_paper_amp_env_cfg",
+  "unitree_go2_paper_amp_baseline_env_cfg",
+  "unitree_go2_rough_amp_env_cfg",
   "unitree_go2_rough_env_cfg",
 ]

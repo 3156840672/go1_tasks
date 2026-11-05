@@ -81,6 +81,15 @@ Go2 指令范围与训练一致：前后 `[-1, 1] m/s`、横向 `[-0.6, 0.6] m/s
 偏航角速度 `[-1, 1] rad/s`。无窗口模式会输出后半段仿真的平均
 `vx/vy/wz` 和绝对跟踪误差，可用于快速比较不同 AMP 检查点。
 
+论文式 Go2 LSTM 学生使用 `--student`。程序维护 256 维 hidden/cell，并在
+仿真复位时清零：
+
+```bash
+PYTHONPATH=sim2sim uv run python sim2sim/go2_sim.py \
+  --student logs/rsl_rl/go2_paper_amp_student/YOUR_RUN/student_4000.pt \
+  --terrain rough --command 0.4 0 0
+```
+
 无检查点时运行 `--headless --steps 100` 只验证模型、地形、执行器与观测接口，
 机器人保持被动站姿。Go2 Rough 的 235 维高度扫描策略和 CTS 策略目前不受
 `go2_sim.py` 支持。键盘与手柄操作与 `go1_sim.py` 相同。

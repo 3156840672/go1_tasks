@@ -22,6 +22,7 @@ dependencies = [
 go2-train = "go2_tasks.cli:train"
 go2-play = "go2_tasks.cli:play"
 go2-list-tasks = "go2_tasks.cli:list_go2_tasks"
+go2-train-paper-amp-student = "go2_tasks.cli:train_paper_amp_student"
 go1-train = "go1_tasks.cli:train"
 go1-play = "go1_tasks.cli:play"
 go1-eval-cts = "go1_tasks.cli:eval_cts"

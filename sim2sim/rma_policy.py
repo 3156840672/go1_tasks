@@ -50,6 +50,46 @@ class StandardActor(nn.Module):
     return self.mlp(obs)
 
 
+class PaperAmpStudentActor(nn.Module):
+  """Stateful inference copy of the paper AMP LSTM student."""
+
+  def __init__(self) -> None:
+    super().__init__()
+    self.obs_dim = 45
+    self.lstm = nn.LSTM(self.obs_dim, 256, batch_first=True)
+    self.memory_encoder = nn.Sequential(
+      nn.Linear(256, 256),
+      nn.ELU(),
+      nn.Linear(256, 128),
+      nn.ELU(),
+      nn.Linear(128, 24),
+    )
+    self.low_level = nn.Sequential(
+      nn.Linear(self.obs_dim + 24, 256),
+      nn.ELU(),
+      nn.Linear(256, 128),
+      nn.ELU(),
+      nn.Linear(128, 64),
+      nn.ELU(),
+      nn.Linear(64, ACTION_DIM),
+      nn.Tanh(),
+    )
+    self.hidden: tuple[torch.Tensor, torch.Tensor] | None = None
+
+  def reset(self, batch_size: int = 1) -> None:
+    self.hidden = (
+      torch.zeros(1, batch_size, 256),
+      torch.zeros(1, batch_size, 256),
+    )
+
+  def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    if self.hidden is None or self.hidden[0].shape[1] != obs.shape[0]:
+      self.reset(obs.shape[0])
+    output, self.hidden = self.lstm(obs.unsqueeze(1), self.hidden)
+    latent = self.memory_encoder(output[:, 0])
+    return self.low_level(torch.cat((obs, latent), dim=-1))
+
+
 class Adapter(nn.Module):
   def __init__(self) -> None:
     super().__init__()
@@ -114,4 +154,28 @@ def load_standard_policy(
   actor.load_state_dict(
     {key: value for key, value in state.items() if key.startswith("mlp.")}
   )
+  return actor.eval()
+
+
+def load_paper_amp_student(checkpoint_path: Path) -> PaperAmpStudentActor:
+  checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+  required = {
+    "student_state_dict",
+    "proprio_dim",
+    "latent_dim",
+    "lstm_hidden_dim",
+  }
+  if not required <= checkpoint.keys():
+    raise ValueError("Checkpoint is not a paper AMP student")
+  if (
+    checkpoint["proprio_dim"] != 45
+    or checkpoint["latent_dim"] != 24
+    or checkpoint["lstm_hidden_dim"] != 256
+  ):
+    raise ValueError("Paper AMP student dimensions do not match deployment contract")
+  actor = PaperAmpStudentActor()
+  if not checkpoint.get("bound_action_mean", True):
+    actor.low_level[-1] = nn.Identity()
+  actor.load_state_dict(checkpoint["student_state_dict"])
+  actor.reset()
   return actor.eval()

@@ -10,6 +10,11 @@ from mjlab.rl import (
 
 
 @dataclass
+class PaperAmpModelCfg(RslRlModelCfg):
+  bound_action_mean: bool = False
+
+
+@dataclass
 class CtsPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
   student_learning_rate: float = 1e-3
   student_epochs: int = 5
@@ -26,6 +31,14 @@ class AmpPpoAlgorithmCfg(RslRlPpoAlgorithmCfg):
   discriminator_batches_per_iteration: int = 8
   gradient_penalty_weight: float = 10.0
   replay_capacity: int = 100_000
+  discriminator_hidden_dims: tuple[int, ...] = (256, 128)
+  discriminator_activation: str = "relu"
+  discriminator_state_mode: str = "extended"
+  discriminator_loss_margin: float = 0.0
+  discriminator_trunk_weight_decay: float = 0.0
+  discriminator_head_weight_decay: float = 0.0
+  reset_discriminator_on_resume: bool = False
+  zero_command_amp_threshold: float = 0.0
 
 
 def unitree_go1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:

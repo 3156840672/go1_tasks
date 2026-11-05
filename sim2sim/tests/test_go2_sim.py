@@ -21,7 +21,7 @@ from go2_sim import (
   VELOCITY_LIMIT,
   make_model,
 )
-from rma_policy import ACTION_DIM, OBS_DIM, StandardActor
+from rma_policy import ACTION_DIM, OBS_DIM, PaperAmpStudentActor, StandardActor
 
 
 class Go2SimTests(unittest.TestCase):
@@ -99,6 +99,16 @@ class Go2SimTests(unittest.TestCase):
     np.testing.assert_allclose(obs[-3:], sim.command)
     sim.policy_step()
     self.assertEqual(sim.last_action.shape, (ACTION_DIM,))
+
+  def test_paper_amp_lstm_state_resets(self):
+    sim = Simulator(None)
+    sim.policy = PaperAmpStudentActor().eval()
+    sim.set_active(True)
+    sim.policy_step()
+    self.assertIsNotNone(sim.policy.hidden)
+    self.assertEqual(sim.policy.hidden[0].shape, (1, 1, 256))
+    sim.reset()
+    self.assertTrue(torch.count_nonzero(sim.policy.hidden[0]) == 0)
 
   def test_non_finite_policy_is_rejected(self):
     class BadPolicy:

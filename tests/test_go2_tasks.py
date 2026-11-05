@@ -1,6 +1,7 @@
 """Go2 asset, registration, and environment smoke tests."""
 
 import torch
+import math
 
 from mjlab.actuator import DcMotorActuator
 from mjlab.entity import Entity
@@ -11,8 +12,10 @@ from mjlab.tasks.registry import list_tasks, load_env_cfg
 from go2_tasks import TASK_IDS
 from go2_tasks.env_cfgs import (
   GO2_AMP_REFERENCE_PATH,
+  GO2_PAPER_AMP_REFERENCE_PATH,
   GO2_DR_BODY_NAMES,
   unitree_go2_amp_env_cfg,
+  unitree_go2_rough_amp_env_cfg,
 )
 from go2_tasks.deployment import (
   ACTION_SCALE,
@@ -58,18 +61,43 @@ def test_go2_task_family_registered() -> None:
     action = cfg.actions["joint_pos"]
     assert isinstance(action, JointPositionActionCfg)
     assert cfg.scene.entities["robot"].init_state.pos[2] == 0.38
-    if key == "amp":
+    if key in ("amp", "rough_amp", "paper_amp_teacher"):
       twist = cfg.commands["twist"]
-      assert twist.ranges.lin_vel_x == (-1.0, 1.0)
-      assert twist.ranges.lin_vel_y == (-0.6, 0.6)
-      assert twist.ranges.ang_vel_z == (-1.0, 1.0)
+      if key in ("amp", "paper_amp_teacher"):
+        assert twist.ranges.lin_vel_x == (-1.0, 1.0)
+        assert twist.ranges.lin_vel_y == (-0.6, 0.6)
+        assert twist.ranges.ang_vel_z == (-1.0, 1.0)
+      else:
+        assert twist.ranges.lin_vel_x == (-0.3, 0.3)
+        assert twist.ranges.lin_vel_y == (-0.2, 0.2)
+        assert twist.ranges.ang_vel_z == (-0.55, 0.55)
       assert twist.rel_standing_envs == 0.05
-      assert cfg.rewards["track_angular_velocity"].weight == 2.0
-      assert cfg.rewards["track_angular_velocity"].params["std"] == 0.25
+      assert cfg.rewards["track_angular_velocity"].weight == (0.5 if key == "paper_amp_teacher" else 2.0)
+      assert math.isclose(
+        cfg.rewards["track_angular_velocity"].params["std"], math.sqrt(0.15)
+      )
       assert (
         cfg.events["amp_reference_state_init"].params["reference_path"]
-        == GO2_AMP_REFERENCE_PATH
+        == (
+          GO2_PAPER_AMP_REFERENCE_PATH
+          if key == "paper_amp_teacher" else GO2_AMP_REFERENCE_PATH
+        )
       )
+    if key in ("rough_amp", "paper_amp_teacher"):
+      assert "height_scan" not in cfg.observations["actor"].terms
+      assert "base_lin_vel" not in cfg.observations["actor"].terms
+      assert "height_scan" in cfg.observations["critic"].terms
+      assert cfg.scene.terrain is not None
+      assert cfg.scene.terrain.terrain_generator is not None
+      assert cfg.scene.terrain.max_init_terrain_level == 0
+      assert "terrain_levels" in cfg.curriculum
+      if key == "paper_amp_teacher":
+        assert "command_vel" not in cfg.curriculum
+        assert twist.heading_command
+        assert twist.rel_heading_envs == 1.0
+        assert twist.resampling_time_range == (20.0, 20.0)
+      else:
+        assert "command_vel" in cfg.curriculum
     if key == "cts":
       articulation = cfg.scene.entities["robot"].articulation
       assert articulation is not None
@@ -88,7 +116,14 @@ def test_go2_randomization_skips_massless_feet() -> None:
 
 
 def test_go2_amp_keeps_domain_randomization_and_pushes() -> None:
-  cfg = unitree_go2_amp_env_cfg(play=False)
+  for cfg in (
+    unitree_go2_amp_env_cfg(play=False),
+    unitree_go2_rough_amp_env_cfg(play=False),
+  ):
+    _assert_amp_randomization(cfg)
+
+
+def _assert_amp_randomization(cfg) -> None:
   expected = {
     "encoder_bias",
     "base_com",

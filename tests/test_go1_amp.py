@@ -3,6 +3,7 @@
 from dataclasses import asdict
 
 import numpy as np
+import pytest
 import torch
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import RslRlVecEnvWrapper
@@ -40,11 +41,15 @@ def _write_reference_clip(path, robot) -> None:
   )
 
 
-def test_amp_task_and_update(tmp_path) -> None:
+@pytest.mark.parametrize("zero_commands", [False, True])
+def test_amp_task_and_update(tmp_path, zero_commands) -> None:
   cfg = load_env_cfg(TASK_IDS["amp"])
   cfg.scene.num_envs = 2
   cfg.events.pop("push_robot", None)
   cfg.events.pop("amp_reference_state_init")
+  if zero_commands:
+    for axis in ("lin_vel_x", "lin_vel_y", "ang_vel_z"):
+      setattr(cfg.commands["twist"].ranges, axis, (0.0, 0.0))
   agent_cfg = load_rl_cfg(TASK_IDS["amp"])
   agent_cfg.num_steps_per_env = 2
   agent_cfg.algorithm.num_learning_epochs = 1
@@ -72,6 +77,11 @@ def test_amp_task_and_update(tmp_path) -> None:
           model.pop(key, None)
     algorithm = AmpPPO.construct_algorithm(obs, wrapped, train_cfg, "cpu")
     assert isinstance(algorithm, PPO)
+    optimizer_weight_decay = [
+      group["weight_decay"]
+      for group in algorithm.discriminator_optimizer.param_groups
+    ]
+    assert optimizer_weight_decay == [0.0, 0.0]
     assert algorithm.motions is None
     algorithm.train_mode()
     assert algorithm.motions is not None
@@ -81,6 +91,10 @@ def test_amp_task_and_update(tmp_path) -> None:
       for _ in range(agent_cfg.num_steps_per_env):
         actions = algorithm.act(obs)
         obs, rewards, dones, extras = wrapped.step(actions)
+        if zero_commands:
+          torch.testing.assert_close(
+            env.command_manager.get_command("twist"), torch.zeros(2, 3)
+          )
         assert algorithm._previous_frame is not None
         transitions = torch.cat(
           (algorithm._previous_frame, amp_frame_from_robot(env.scene["robot"])),

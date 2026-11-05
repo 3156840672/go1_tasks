@@ -20,7 +20,7 @@ uv run go2-train Go2-Velocity-Flat --env.scene.num-envs 1024
 uv run go2-play Go2-Velocity-Flat --checkpoint-file /path/to/model.pt --viewer viser
 ```
 
-Go2 提供 Rough、Flat、MoB、AMP、CTS 五个任务。AMP 使用
+Go2提供Rough、Flat、MoB、AMP、Rough AMP、论文式 AMP 教师和 CTS。AMP任务使用
 `logs/amp/go2_reference` 下的全部类别；读取器会递归加载所有 `.npz`，
 因此不能与 Go1 动作混放。
 
@@ -107,14 +107,17 @@ MPLCONFIGDIR=/tmp/mplcache .venv/bin/python \
   tools/validate_go2_amp_dataset.py logs/amp/go2_reference
 ```
 
-Go2 AMP使用与MoB任务一致的正常速度范围：前后`-1.0–1.0 m/s`、侧向
-`-0.6–0.6 m/s`、偏航`-1.0–1.0 rad/s`，并同时启用线速度与角速度跟踪
-奖励。AMP是风格先验，任务命令不需要限制在参考动作的实测速度范围内；
-速度跟踪奖励负责驱动策略超出短OCS2片段的速度，同时判别器约束关节、姿态、
-足端和速度转移保持自然。
+Go2 平地 AMP 使用与 MoB 一致的正常速度范围。Rough AMP 和论文式教师最终也
+达到前后 `-1.0–1.0 m/s`、侧向 `-0.6–0.6 m/s`、偏航
+`-1.0–1.0 rad/s`，但训练从参考数据实际覆盖的 `±0.3、±0.2、±0.55` 开始，
+第3500轮和第6000轮分两次扩大。AMP虽然学习风格，普通任务的92维判别器输入
+和论文任务的62维判别器输入都包含机身线速度和角速度；如果一开始的命令远超
+参考支持范围，判别器会仅凭速度识别真假并使风格奖励消失。论文任务严格采用
+`62 -> 1024 -> 512 -> 1`和ELU，具体状态定义见下文链接。
 
-角速度跟踪奖励权重为`2.0`、高斯容差为`0.25 rad/s`。较小容差用于避免策略
-在`±1 rad/s`命令范围内保持不转却仍获得较高奖励；线速度跟踪权重同为`2.0`。
+角速度跟踪奖励权重为`2.0`，高斯项使用论文对应的
+`exp(-error²/0.15)`，代码参数为`std=sqrt(0.15)`。原先的`std=0.25`实际分母
+只有`0.0625`，大误差时奖励与梯度都几乎为零，不利于从不会转向开始学习。
 
 连续均匀采样几乎不会产生严格的零速度命令，因此训练时单独将5%的环境设为
 `[0, 0, 0]`，并在参考集中提供稳定站立片段。两者共同训练零命令保持静止；
@@ -153,6 +156,31 @@ uv run go2-train Go2-Velocity-AMP --env.scene.num-envs 1024
 `[AMP] 17 clips, 3825 transitions, 50 Hz`；ONNX 会与检查点一起写入
 `logs/rsl_rl/go2_amp/<run>/`。
 
+### 单阶段Rough AMP
+
+`Go2-Velocity-Rough-AMP`在现有AMP上加入崎岖地形和自动地形难度课程，
+不包含教师、学生、蒸馏或LSTM。训练从最低地形等级开始，成功移动到足够远后
+逐步升级地形；速度命令也按上述三阶段课程扩大到完整正常范围。
+
+Actor仍是可部署的45维本体观测，输入中没有机身线速度和地形扫描。训练Critic
+保留机身线速度、187维地形扫描和接触信息，共259维；Critic仅用于训练，导出的
+策略和实机部署不需要地形传感器。AMP判别器通过仿真地形扫描计算机身相对局部
+地面的高度，避免直接使用世界坐标高度造成不同地形层级之间的错误风格差异。
+
+```bash
+uv run go2-train Go2-Velocity-Rough-AMP \
+  --env.scene.num-envs 1024 \
+  --agent.logger tensorboard
+```
+
+检查点和ONNX写入`logs/rsl_rl/go2_rough_amp/<run>/`。播放时使用同一任务ID：
+
+```bash
+uv run go2-play Go2-Velocity-Rough-AMP \
+  --checkpoint-file logs/rsl_rl/go2_rough_amp/<run>/model_6000.pt \
+  --viewer viser
+```
+
 论文 [Adversarial Motion Priors Make Good Substitutes for Complex Reward
 Functions](https://arxiv.org/html/2203.15103) 的参考数据总计约 4.5 秒，
 由 pace、trot、canter 和原地转向的短片段组成；论文没有报告各类别的精确
@@ -160,6 +188,23 @@ Functions](https://arxiv.org/html/2203.15103) 的参考数据总计约 4.5 秒�
 另提供六个文件，并为每个文件设置 `MotionWeight`，按文件权重抽样后再从
 文件内抽时间。本仓库的每段 4.5 s 取自该量级，但类别更多，不能当作论文
 原始比例的精确复刻。OCS2 没有 canter，Flying Trot 是最接近的可用步态。
+
+论文式特权教师不直接读取上述17段多步态数据，而使用
+`logs/amp/go2_paper_reference`。该目录由12段方向Trot各截取中间2.5秒组成，
+移动部分总计30秒，与 Wu 等人的 Rough AMP 论文报告时长一致；为改善零指令
+踏步，另加入1.6秒稳定站立片段，总计31.6秒，站立转移约占5.1%。教师保留
+5%严格零指令并启用零指令AMP风格学习。生成和校验命令见
+[`go2_paper_amp.md`](go2_paper_amp.md)。
+
+### 论文式特权教师与 LSTM 学生
+
+`Go2-Velocity-Rough-AMP-Teacher`在 Rough AMP 上加入论文的两路编码器：30维
+特权状态压缩为8维，187维地形扫描压缩为16维，再与45维本体观测共同输入
+低层策略。教师继续使用当前 OCS2 参考目录训练 AMP。训练完成后使用
+`go2-train-paper-amp-student`按 DAgger 蒸馏为只读45维本体观测的LSTM学生。
+
+完整命令、网络结构、差异说明、ONNX输入输出和实机状态管理见
+[`go2_paper_amp.md`](go2_paper_amp.md)。
 
 ## 实机接口
 
@@ -212,6 +257,6 @@ uv run python sim2sim/go2_sim.py \
 ```
 
 无检查点时机器人保持被动站姿，用于检查模型、地形和执行器接口。`go2_sim.py`
-目前只接受 48 维 Flat/部署 actor；Rough 的 235 维高度扫描策略和 CTS 策略
-需要单独的推理适配。真机部署前应先在 sim2sim 中验证，并保留急停、通信超时、
+会自动识别48维Flat或45维AMP/Rough AMP策略；Rough AMP可选择`--terrain rough`
+测试独立MuJoCo地形。CTS策略需要单独的推理适配。真机部署前应先在sim2sim中验证，并保留急停、通信超时、
 姿态保护、关节软限位、速度限制和力矩饱和。

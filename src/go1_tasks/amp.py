@@ -8,8 +8,10 @@ from rsl_rl.algorithms import PPO
 from torch import autograd, nn
 
 from .amp_data import (
+  AMP_STATE_MODES,
   FOOT_NAMES,
   FRAME_DIM,
+  PAPER_FRAME_DIM,
   TRANSITION_DIM,
   AmpMotionDataset,
   amp_frame_from_robot,
@@ -17,7 +19,7 @@ from .amp_data import (
 
 
 class AmpDiscriminator(nn.Module):
-  """Scalar logit for each pair of adjacent 46-dimensional motion states.
+  """Scalar logit for each adjacent-state transition used by AMP.
 
   The output is a raw logit in the least-squares GAN formulation used by AMP:
   expert transitions target +1 and policy transitions target -1. Finite targets
@@ -25,19 +27,34 @@ class AmpDiscriminator(nn.Module):
   the style reward vanish.
   """
 
-  def __init__(self, hidden_dims: tuple[int, ...] = (256, 128)) -> None:
+  def __init__(
+    self,
+    hidden_dims: tuple[int, ...] = (256, 128),
+    *,
+    input_dim: int = TRANSITION_DIM,
+    activation: str = "relu",
+  ) -> None:
     super().__init__()
+    activations: dict[str, type[nn.Module]] = {"relu": nn.ReLU, "elu": nn.ELU}
+    try:
+      activation_cls = activations[activation.lower()]
+    except KeyError as exc:
+      raise ValueError(
+        f"Unknown AMP discriminator activation {activation!r}; "
+        f"expected one of {tuple(activations)}"
+      ) from exc
     layers: list[nn.Module] = []
-    in_dim = TRANSITION_DIM
+    in_dim = input_dim
     for hidden_dim in hidden_dims:
-      layers.extend((nn.Linear(in_dim, hidden_dim), nn.ReLU()))
+      layers.extend((nn.Linear(in_dim, hidden_dim), activation_cls()))
       in_dim = hidden_dim
     self.trunk = nn.Sequential(*layers)
     self.head = nn.Linear(in_dim, 1)
+    self.input_dim = input_dim
 
   def forward(self, transitions: torch.Tensor) -> torch.Tensor:
-    if transitions.shape[-1] != TRANSITION_DIM:
-      raise ValueError(f"AMP transition must have {TRANSITION_DIM} features")
+    if transitions.shape[-1] != self.input_dim:
+      raise ValueError(f"AMP transition must have {self.input_dim} features")
     return self.head(self.trunk(transitions)).squeeze(-1)
 
   def compute_grad_pen(
@@ -117,18 +134,32 @@ def amp_style_reward(logits: torch.Tensor) -> torch.Tensor:
   return torch.clamp(1.0 - 0.25 * (logits - 1.0).square(), min=0.0)
 
 
+def amp_discriminator_loss(expert_logits, policy_logits, target_magnitude=0.0):
+  """LSGAN regression; zero selects the paper targets +/-1.
+
+  A positive legacy margin selects symmetric smoothed targets, never masks
+  samples. Overshooting either target must retain a restoring gradient.
+  """
+  target = target_magnitude if target_magnitude > 0 else 1.0
+  return 0.5 * (
+    F.mse_loss(expert_logits, torch.full_like(expert_logits, target))
+    + F.mse_loss(policy_logits, torch.full_like(policy_logits, -target))
+  )
+
+
 class AmpReplayBuffer:
   """Fixed-size circular store for past policy transitions."""
 
-  def __init__(self, capacity: int, device: str) -> None:
+  def __init__(self, capacity: int, transition_dim: int, device: str) -> None:
     if capacity < 1:
       raise ValueError("Replay capacity must be positive")
-    self.data = torch.empty(capacity, TRANSITION_DIM, device=device)
+    self.data = torch.empty(capacity, transition_dim, device=device)
+    self.transition_dim = transition_dim
     self.size = 0
     self.cursor = 0
 
   def add(self, values: torch.Tensor) -> None:
-    if values.ndim != 2 or values.shape[1] != TRANSITION_DIM:
+    if values.ndim != 2 or values.shape[1] != self.transition_dim:
       raise ValueError("Invalid AMP replay batch shape")
     values = values.detach().to(self.data.device)
     if len(values) >= len(self.data):
@@ -162,6 +193,14 @@ class AmpPPO(PPO):
     discriminator_batches_per_iteration: int = 8,
     gradient_penalty_weight: float = 10.0,
     replay_capacity: int = 100_000,
+    discriminator_hidden_dims: tuple[int, ...] = (256, 128),
+    discriminator_activation: str = "relu",
+    discriminator_state_mode: str = "extended",
+    discriminator_loss_margin: float = 0.0,
+    discriminator_trunk_weight_decay: float = 0.0,
+    discriminator_head_weight_decay: float = 0.0,
+    reset_discriminator_on_resume: bool = False,
+    zero_command_amp_threshold: float = 0.0,
     **kwargs,
   ) -> None:
     super().__init__(*args, **kwargs)
@@ -179,6 +218,18 @@ class AmpPPO(PPO):
       )
     if gradient_penalty_weight < 0:
       raise ValueError("AMP gradient penalty must be nonnegative")
+    if discriminator_trunk_weight_decay < 0 or discriminator_head_weight_decay < 0:
+      raise ValueError("AMP discriminator weight decay must be nonnegative")
+    if not 0 <= discriminator_loss_margin < 1:
+      raise ValueError("Discriminator loss margin must be in [0, 1)")
+    self.discriminator_loss_margin = discriminator_loss_margin
+    if zero_command_amp_threshold < 0:
+      raise ValueError("AMP zero-command threshold must be nonnegative")
+    if discriminator_state_mode not in AMP_STATE_MODES:
+      raise ValueError(
+        f"Unknown AMP state mode {discriminator_state_mode!r}; "
+        f"expected one of {AMP_STATE_MODES}"
+      )
     if self.is_multi_gpu:
       raise ValueError("Go1 AMP training currently supports one GPU only")
     self.reference_path = reference_path
@@ -187,17 +238,45 @@ class AmpPPO(PPO):
     self.discriminator_batch_size = discriminator_batch_size
     self.discriminator_batches_per_iteration = discriminator_batches_per_iteration
     self.gradient_penalty_weight = gradient_penalty_weight
-    self.discriminator = AmpDiscriminator().to(self.device)
-    self.discriminator.eval()
-    self.discriminator_optimizer = torch.optim.Adam(
-      self.discriminator.parameters(), lr=discriminator_learning_rate
+    self.reset_discriminator_on_resume = reset_discriminator_on_resume
+    self.zero_command_amp_threshold = zero_command_amp_threshold
+    self.discriminator_state_mode = discriminator_state_mode
+    self.frame_dim = (
+      PAPER_FRAME_DIM if discriminator_state_mode == "paper" else FRAME_DIM
     )
-    self.replay = AmpReplayBuffer(replay_capacity, self.device)
+    self.transition_dim = 2 * self.frame_dim
+    if not discriminator_hidden_dims or any(dim <= 0 for dim in discriminator_hidden_dims):
+      raise ValueError("AMP discriminator hidden dimensions must be positive")
+    self.discriminator = AmpDiscriminator(
+      discriminator_hidden_dims,
+      input_dim=self.transition_dim,
+      activation=discriminator_activation,
+    ).to(self.device)
+    self.discriminator.eval()
+    # Use separate regularization for the feature network and final classifier.
+    # The stronger head decay follows the reference AMP implementation and
+    # prevents a large final-layer weight from trivially saturating the LSGAN.
+    self.discriminator_optimizer = torch.optim.Adam(
+      (
+        {
+          "params": self.discriminator.trunk.parameters(),
+          "weight_decay": discriminator_trunk_weight_decay,
+        },
+        {
+          "params": self.discriminator.head.parameters(),
+          "weight_decay": discriminator_head_weight_decay,
+        },
+      ),
+      lr=discriminator_learning_rate,
+    )
+    self.replay = AmpReplayBuffer(replay_capacity, self.transition_dim, self.device)
     self._policy_transitions: list[torch.Tensor] = []
     self._previous_frame: torch.Tensor | None = None
     self._robot = None
     self._step_dt: float | None = None
     self._foot_ids: list[int] | None = None
+    self._terrain_sensor = None
+    self._command_manager = None
     self.motions: AmpMotionDataset | None = None
     self.amp_normalizer: AmpFeatureNormalizer | None = None
     self._style_reward_values: list[torch.Tensor] = []
@@ -213,7 +292,32 @@ class AmpPPO(PPO):
     if tuple(foot_names) != FOOT_NAMES:
       raise ValueError(f"Unexpected foot order: {foot_names}")
     algorithm._foot_ids = foot_ids
+    try:
+      algorithm._terrain_sensor = env.unwrapped.scene["terrain_scan"]
+    except KeyError:
+      algorithm._terrain_sensor = None
+    algorithm._command_manager = env.unwrapped.command_manager
     return algorithm
+
+  def _root_height_above_terrain(self) -> torch.Tensor | None:
+    """Measure base height at the closest terrain ray for rough-terrain AMP."""
+    if self._terrain_sensor is None:
+      return None
+    data = self._terrain_sensor.data
+    valid = data.distances >= 0
+    frame_xy = data.frame_pos_w[:, :1, :2]
+    distance_xy = (data.hit_pos_w[..., :2] - frame_xy).square().sum(-1)
+    distance_xy = torch.where(
+      valid, distance_xy, torch.full_like(distance_xy, float("inf"))
+    )
+    closest = distance_xy.argmin(dim=1, keepdim=True)
+    hit_z = data.hit_pos_w[..., 2].gather(1, closest)
+    height = data.frame_pos_w[:, 0, 2:3] - hit_z
+    # A terrain scan can miss every ray near a map boundary. Preserve the flat
+    # behavior as a finite fallback until the out-of-bounds termination resets it.
+    all_missed = ~valid.any(dim=1, keepdim=True)
+    assert self._robot is not None
+    return torch.where(all_missed, self._robot.data.root_link_pos_w[:, 2:3], height)
 
   def train_mode(self) -> None:
     super().train_mode()
@@ -223,6 +327,7 @@ class AmpPPO(PPO):
         self.reference_path,
         joint_names=tuple(self._robot.joint_names),
         fps=1.0 / self._step_dt,
+        state_mode=self.discriminator_state_mode,
       )
       print(
         f"[AMP] {self.motions.num_clips} clips, {len(self.motions)} transitions, "
@@ -231,20 +336,20 @@ class AmpPPO(PPO):
     if self.amp_normalizer is None:
       frames = torch.cat(
         (
-          self.motions.transitions[:, :FRAME_DIM],
-          self.motions.transitions[:, FRAME_DIM:],
+          self.motions.transitions[:, : self.frame_dim],
+          self.motions.transitions[:, self.frame_dim :],
         ),
         dim=0,
       )
-      self.amp_normalizer = AmpFeatureNormalizer(FRAME_DIM, self.device)
+      self.amp_normalizer = AmpFeatureNormalizer(self.frame_dim, self.device)
       self.amp_normalizer.initialize(frames)
 
   def _normalize_transitions(self, transitions: torch.Tensor) -> torch.Tensor:
     assert self.amp_normalizer is not None
     return torch.cat(
       (
-        self.amp_normalizer.normalize(transitions[..., :FRAME_DIM]),
-        self.amp_normalizer.normalize(transitions[..., FRAME_DIM:]),
+        self.amp_normalizer.normalize(transitions[..., : self.frame_dim]),
+        self.amp_normalizer.normalize(transitions[..., self.frame_dim :]),
       ),
       dim=-1,
     )
@@ -252,7 +357,7 @@ class AmpPPO(PPO):
   def _update_normalizer(self, transitions: torch.Tensor) -> None:
     assert self.amp_normalizer is not None
     frames = torch.cat(
-      (transitions[:, :FRAME_DIM], transitions[:, FRAME_DIM:]), dim=0
+      (transitions[:, : self.frame_dim], transitions[:, self.frame_dim :]), dim=0
     )
     self.amp_normalizer.update(frames.detach())
 
@@ -262,22 +367,38 @@ class AmpPPO(PPO):
       self._robot,
       joint_names=self.motions.joint_names,
       foot_ids=self._foot_ids,
+      root_height=self._root_height_above_terrain(),
+      state_mode=self.discriminator_state_mode,
     ).detach()
     return super().act(obs)
 
   def process_env_step(self, obs, rewards, dones, extras):
     assert self._previous_frame is not None and self._robot is not None
     assert self._step_dt is not None
-    next_frame = amp_frame_from_robot(self._robot, foot_ids=self._foot_ids)
+    next_frame = amp_frame_from_robot(
+      self._robot,
+      foot_ids=self._foot_ids,
+      root_height=self._root_height_above_terrain(),
+      state_mode=self.discriminator_state_mode,
+    )
     transitions = torch.cat((self._previous_frame, next_frame), dim=-1)
     valid = ~dones.bool().reshape(-1)
+    style_valid = valid
+    if self.zero_command_amp_threshold > 0:
+      assert self._command_manager is not None
+      command = self._command_manager.get_command("twist")
+      assert command is not None
+      moving = torch.linalg.vector_norm(command, dim=-1) > self.zero_command_amp_threshold
+      style_valid = valid & moving
     with torch.no_grad():
       logits = self.discriminator(self._normalize_transitions(transitions))
       imitation_reward = amp_style_reward(logits)
-      rewards += self.amp_reward_weight * self._step_dt * imitation_reward * valid
-    if bool(valid.any()):
-      self._policy_transitions.append(transitions[valid].detach())
-      self._style_reward_values.append(imitation_reward[valid].detach())
+      rewards += (
+        self.amp_reward_weight * self._step_dt * imitation_reward * style_valid
+      )
+    if bool(style_valid.any()):
+      self._policy_transitions.append(transitions[style_valid].detach())
+      self._style_reward_values.append(imitation_reward[style_valid].detach())
     self._previous_frame = None
     super().process_env_step(obs, rewards, dones, extras)
 
@@ -310,9 +431,6 @@ class AmpPPO(PPO):
     expert_logit_sum = 0.0
     policy_logit_sum = 0.0
     self.discriminator.train()
-    ones = torch.ones(
-      self.discriminator_batch_size, device=self.device
-    )
     for _ in range(
       self.discriminator_epochs * self.discriminator_batches_per_iteration
     ):
@@ -324,11 +442,10 @@ class AmpPPO(PPO):
       policy = self._normalize_transitions(policy_raw)
       expert_logits = self.discriminator(expert)
       policy_logits = self.discriminator(policy)
-      # Least-squares GAN targets. Unlike BCE these are finite, so the
-      # discriminator stops pushing its logits towards infinity.
-      loss = 0.5 * (
-        F.mse_loss(expert_logits, ones)
-        + F.mse_loss(policy_logits, -ones)
+      # Always regress to finite targets, including samples beyond either
+      # target. A one-sided mask removes the restoring gradient on overshoot.
+      loss = amp_discriminator_loss(
+        expert_logits, policy_logits, self.discriminator_loss_margin
       )
       if self.gradient_penalty_weight > 0:
         loss = loss + self.discriminator.compute_grad_pen(
@@ -352,6 +469,8 @@ class AmpPPO(PPO):
 
   def save(self) -> dict:
     saved = super().save()
+    if hasattr(self.actor, "bound_action_mean"):
+      saved["amp_bound_action_mean"] = self.actor.bound_action_mean
     saved["amp_discriminator_state_dict"] = self.discriminator.state_dict()
     saved["amp_optimizer_state_dict"] = self.discriminator_optimizer.state_dict()
     if self.amp_normalizer is not None:
@@ -359,16 +478,29 @@ class AmpPPO(PPO):
     return saved
 
   def load(self, loaded_dict, load_cfg=None, strict=True):
+    if hasattr(self.actor, "bound_action_mean") and (load_cfg is None or load_cfg.get("actor")):
+      if loaded_dict.get("amp_bound_action_mean", True) != self.actor.bound_action_mean:
+        raise ValueError("Teacher action activation differs from checkpoint; use its saved configuration")
     restored = super().load(loaded_dict, load_cfg, strict)
-    if load_cfg is None or load_cfg.get("amp_discriminator"):
+    reset_discriminator = self.reset_discriminator_on_resume and load_cfg is None
+    if reset_discriminator:
+      print(
+        "[AMP] Keeping the resumed actor/critic and resetting the discriminator, "
+        "optimizer, normalizer, and replay buffer"
+      )
+    if not reset_discriminator and (
+      load_cfg is None or load_cfg.get("amp_discriminator")
+    ):
       self.discriminator.load_state_dict(
         loaded_dict["amp_discriminator_state_dict"], strict=strict
       )
       if "amp_normalizer_state" in loaded_dict:
         if self.amp_normalizer is None:
-          self.amp_normalizer = AmpFeatureNormalizer(FRAME_DIM, self.device)
+          self.amp_normalizer = AmpFeatureNormalizer(self.frame_dim, self.device)
         self.amp_normalizer.load_state_dict(loaded_dict["amp_normalizer_state"])
-    if load_cfg is None or load_cfg.get("optimizer"):
+    if not reset_discriminator and (
+      load_cfg is None or load_cfg.get("optimizer")
+    ):
       self.discriminator_optimizer.load_state_dict(
         loaded_dict["amp_optimizer_state_dict"]
       )

@@ -6,6 +6,8 @@ import torch
 
 from go1_tasks.amp_data import (
   FRAME_DIM,
+  PAPER_FRAME_DIM,
+  PAPER_TRANSITION_DIM,
   TRANSITION_DIM,
   AmpMotionDataset,
   amp_frame,
@@ -48,6 +50,34 @@ def test_amp_frame_features() -> None:
   torch.testing.assert_close(result[0, :7], torch.tensor([0.3, 0, 0, -1, 0.5, 0, 0]))
   torch.testing.assert_close(result[0, -12:-9], torch.tensor([0.2, 0, 0]))
 
+  relative = amp_frame(
+    pos,
+    quat,
+    linear,
+    angular,
+    joints,
+    joints,
+    foot,
+    root_height=torch.tensor([[0.27]]),
+  )
+  torch.testing.assert_close(relative[:, :1], torch.tensor([[0.27]]))
+
+  paper = amp_frame(
+    pos,
+    quat,
+    linear,
+    angular,
+    joints,
+    joints,
+    foot,
+    root_height=torch.tensor([[0.27]]),
+    state_mode="paper",
+  )
+  assert paper.shape == (1, PAPER_FRAME_DIM)
+  torch.testing.assert_close(paper[0, :24], torch.zeros(24))
+  torch.testing.assert_close(paper[0, 24:27], torch.tensor([0.5, 0, 0]))
+  torch.testing.assert_close(paper[0, -1:], torch.tensor([0.27]))
+
 
 def test_dataset_only_pairs_within_each_clip(tmp_path) -> None:
   _write_clip(tmp_path / "a.npz", 0.3)
@@ -60,6 +90,11 @@ def test_dataset_only_pairs_within_each_clip(tmp_path) -> None:
     dataset.transitions[:, 0], dataset.transitions[:, FRAME_DIM]
   )
   assert dataset.sample(7).shape == (7, TRANSITION_DIM)
+
+  paper_dataset = AmpMotionDataset(tmp_path, fps=50.0, state_mode="paper")
+  assert paper_dataset.frame_dim == PAPER_FRAME_DIM
+  assert paper_dataset.transitions.shape == (4, PAPER_TRANSITION_DIM)
+  assert paper_dataset.sample(7).shape == (7, PAPER_TRANSITION_DIM)
 
 
 def test_dataset_rejects_inconsistent_joint_order(tmp_path) -> None:
