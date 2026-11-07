@@ -15,6 +15,7 @@ from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
 from mjlab.sensor import ContactMatch, ObjRef, RayCastSensorCfg
 
+from go1_tasks.cts import linear_velocity_error_l2, track_yaw_velocity
 from go1_tasks.env_cfgs import (
   unitree_go1_amp_env_cfg,
   unitree_go1_cts_env_cfg,
@@ -33,6 +34,13 @@ from .robots.go2 import (
   THIGH_GEOM_NAMES,
   get_go2_robot_cfg,
 )
+from .him import (
+  COMMAND_DIM,
+  HISTORY_STEPS,
+  PRIVILEGED_DIM,
+  PROPRIO_DIM,
+)
+from .him_commands import HimVelocityCommandCfg
 from .paper_amp import paper_privileged_state
 from . import paper_rewards
 from .paper_curriculum import terrain_levels_from_tracking
@@ -44,6 +52,17 @@ GO2_DR_BODY_NAMES = (BASE_BODY_NAME, ".*_hip", ".*_thigh", ".*_calf")
 # recursively, so Trot, Flying Trot, the walks, and both turns share one dataset.
 GO2_AMP_REFERENCE_PATH = "logs/amp/go2_reference"
 GO2_PAPER_AMP_REFERENCE_PATH = "logs/amp/go2_paper_reference"
+
+# HIMLoco 的策略输入：3 命令 + 3 角速度 + 3 投影重力 + 12 关节角 + 12 关节速度
+# + 12 上一动作。顺序必须与部署端 him_actor_observation() 一致。
+HIM_PROPRIO_TERMS = (
+  "command",
+  "base_ang_vel",
+  "projected_gravity",
+  "joint_pos",
+  "joint_vel",
+  "actions",
+)
 
 
 def _replace_contact_match(sensor, *, primary=None, secondary=None) -> None:
@@ -290,6 +309,85 @@ def unitree_go2_rough_amp_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   return cfg
 
 
+def unitree_go2_him_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Rough-terrain Go2 task for Hybrid Internal Model (HIMLoco).
+
+  The deployable actor only sees a ``HISTORY_STEPS``-step history of the 45-D
+  proprioceptive vector.  The critic is the paper's single-frame privileged
+  vector ``[proprio(45), base_lin_vel(3), base_lin_acc(3), height_scan(187)]``:
+  the estimator reads the privileged velocity from indices 45:48 and the
+  successor state from indices 3:48, so the first 45 entries must keep exactly
+  the actor's term order.  mjlab has no "external force" observation, so the
+  paper's 3-D disturbance block carries the simulated base linear
+  acceleration, which reacts to pushes, impacts and terrain variation.
+  """
+  cfg = unitree_go2_rough_env_cfg(play=play)
+  cfg.scene.num_envs = 1 if play else 1024
+
+  if not play:
+    # The inherited sampler almost never produces exactly zero vx/vy with a
+    # nonzero yaw command. Reserve worlds for in-place turns in both directions.
+    twist = cfg.commands["twist"]
+    cfg.commands["twist"] = HimVelocityCommandCfg(
+      **{field.name: deepcopy(getattr(twist, field.name)) for field in fields(twist)}
+    )
+
+  source_actor = cfg.observations["actor"].terms
+  source_critic = cfg.observations["critic"].terms
+  proprio = {name: deepcopy(source_actor[name]) for name in HIM_PROPRIO_TERMS}
+  # HIMLoco scales these observations before appending them to history.
+  proprio["command"].scale = (2.0, 2.0, 0.25)
+  proprio["base_ang_vel"].scale = 0.25
+  proprio["joint_vel"].scale = 0.05
+  privileged = {
+    **{name: deepcopy(proprio[name]) for name in HIM_PROPRIO_TERMS},
+    "base_lin_vel": deepcopy(source_critic["base_lin_vel"]),
+    "base_lin_acc": ObservationTermCfg(
+      func=envs_mdp.builtin_sensor,
+      params={"sensor_name": "robot/imu_lin_acc"},
+    ),
+    "height_scan": deepcopy(source_critic["height_scan"]),
+  }
+  privileged["base_lin_vel"].scale = 2.0
+
+  cfg.observations = {
+    "actor": ObservationGroupCfg(
+      terms=proprio,
+      concatenate_terms=True,
+      enable_corruption=not play,
+      history_length=HISTORY_STEPS,
+      flatten_history_dim=True,
+    ),
+    "critic": ObservationGroupCfg(
+      terms=privileged,
+      concatenate_terms=True,
+      enable_corruption=False,
+    ),
+  }
+
+  # The paper rewards yaw tracking and penalizes roll/pitch rates separately.
+  # mjlab's default couples all three rates inside one exponential, so rough
+  # terrain roll/pitch motion suppresses the yaw signal even when yaw tracks.
+  cfg.rewards["track_angular_velocity"] = RewardTermCfg(
+    func=track_yaw_velocity,
+    weight=2.0,
+    params={"command_name": "twist", "std": math.sqrt(0.25)},
+  )
+  cfg.rewards["body_ang_vel"].weight = -0.2
+  # Scale the paper's -0.01 action-rate cost by the same factor of four as
+  # linear tracking. The inherited -0.2 cost dominated the yaw reward.
+  cfg.rewards["action_rate_l2"].weight = -0.04
+  # exp(-e^2/sigma^2) is saturated while the robot stands (e ~ 0.7 m/s), so it
+  # cannot pull the policy out of that basin.  The dense L2 cost keeps a
+  # gradient at large errors; CTS uses the same term on the same Go2 commands.
+  cfg.rewards["linear_velocity_error_l2"] = RewardTermCfg(
+    func=linear_velocity_error_l2,
+    weight=-1.0,
+    params={"command_name": "twist"},
+  )
+  return cfg
+
+
 def unitree_go2_paper_amp_env_cfg(
   play: bool = False, *, baseline: bool = False
 ) -> ManagerBasedRlEnvCfg:
@@ -377,10 +475,12 @@ def unitree_go2_paper_amp_baseline_env_cfg(
 
 __all__ = [
   "GO2_AMP_REFERENCE_PATH",
+  "HIM_PROPRIO_TERMS",
   "GO2_PAPER_AMP_REFERENCE_PATH",
   "unitree_go2_amp_env_cfg",
   "unitree_go2_cts_env_cfg",
   "unitree_go2_flat_env_cfg",
+  "unitree_go2_him_env_cfg",
   "unitree_go2_mob_env_cfg",
   "unitree_go2_paper_amp_env_cfg",
   "unitree_go2_paper_amp_baseline_env_cfg",

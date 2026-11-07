@@ -48,6 +48,11 @@ JOINT_UPPER = np.array(
   ],
   dtype=np.float32,
 )
+HIM_OBS_DIM = 45
+HIM_HISTORY_STEPS = 6
+HIM_COMMAND_SCALE = np.array((2.0, 2.0, 0.25), dtype=np.float32)
+HIM_ANG_VEL_SCALE = 0.25
+HIM_JOINT_VEL_SCALE = 0.05
 KP = np.full(12, 25.0, dtype=np.float32)
 KD = np.full(12, 0.5, dtype=np.float32)
 # robot_lab UNITREE_GO2_CFG motor model; separate from the source MJCF limits.
@@ -101,6 +106,39 @@ def flat_actor_observation(
   return np.concatenate(values)
 
 
+def him_actor_observation(
+  *,
+  command: np.ndarray,
+  base_ang_vel: np.ndarray,
+  projected_gravity: np.ndarray,
+  joint_pos: np.ndarray,
+  joint_vel: np.ndarray,
+  previous_action: np.ndarray,
+) -> np.ndarray:
+  """Build the 45-D HIM observation for one control step.
+
+  The layout follows HIMLoco: the command comes first, then angular velocity,
+  projected gravity, joint positions, joint velocities and the previous
+  action.  A deployment must keep the last ``HIM_HISTORY_STEPS`` of these
+  vectors and feed them **newest first** to the exported policy.
+  """
+  values = tuple(
+    np.asarray(value, dtype=np.float32).reshape(-1)
+    for value in (
+      command * HIM_COMMAND_SCALE,
+      base_ang_vel * HIM_ANG_VEL_SCALE,
+      projected_gravity,
+      joint_pos - DEFAULT_JOINT_POS,
+      joint_vel * HIM_JOINT_VEL_SCALE,
+      previous_action,
+    )
+  )
+  expected = (3, 3, 3, 12, 12, 12)
+  if tuple(len(value) for value in values) != expected:
+    raise ValueError("Invalid Go2 HIM observation component dimensions")
+  return np.concatenate(values)
+
+
 __all__ = [
   "ACTION_SCALE",
   "CONTROL_DT",
@@ -114,6 +152,12 @@ __all__ = [
   "SOURCE_MJCF_TORQUE_LIMIT",
   "TORQUE_LIMIT",
   "VELOCITY_LIMIT",
+  "HIM_HISTORY_STEPS",
+  "HIM_OBS_DIM",
+  "HIM_COMMAND_SCALE",
+  "HIM_ANG_VEL_SCALE",
+  "HIM_JOINT_VEL_SCALE",
   "flat_actor_observation",
+  "him_actor_observation",
   "policy_action_to_joint_targets",
 ]

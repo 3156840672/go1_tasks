@@ -1,6 +1,8 @@
 """Go2 sim2sim model and inference contract tests."""
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import mujoco
 import numpy as np
@@ -21,7 +23,15 @@ from go2_sim import (
   VELOCITY_LIMIT,
   make_model,
 )
-from rma_policy import ACTION_DIM, OBS_DIM, PaperAmpStudentActor, StandardActor
+from rma_policy import (
+  ACTION_DIM,
+  HIM_OBS_DIM,
+  OBS_DIM,
+  HimActor,
+  PaperAmpStudentActor,
+  StandardActor,
+  load_him_policy,
+)
 
 
 class Go2SimTests(unittest.TestCase):
@@ -109,6 +119,41 @@ class Go2SimTests(unittest.TestCase):
     self.assertEqual(sim.policy.hidden[0].shape, (1, 1, 256))
     sim.reset()
     self.assertTrue(torch.count_nonzero(sim.policy.hidden[0]) == 0)
+
+  def test_him_policy_history_contract(self):
+    policy = HimActor().eval()
+    sim = Simulator(None)
+    sim.policy = policy
+    sim.set_active(True)
+    sim.command[:] = [0.3, -0.2, 0.7]
+    sim.data.qvel[sim.vadr] = 1.0
+    obs = sim.observation()
+    self.assertEqual(obs.shape, (HIM_OBS_DIM,))
+    np.testing.assert_allclose(obs[:3], sim.command * [2.0, 2.0, 0.25])
+    np.testing.assert_allclose(obs[3:6], np.zeros(3), atol=1e-6)
+    np.testing.assert_allclose(obs[6:9], [0, 0, -1], atol=1e-6)
+    np.testing.assert_allclose(obs[21:33], np.full(12, 0.05), atol=1e-6)
+    sim.policy_step()
+    self.assertEqual(sim.last_action.shape, (ACTION_DIM,))
+    # The module keeps a newest-first ring buffer of exactly this observation.
+    np.testing.assert_allclose(policy._history[0, 0].numpy(), obs, atol=1e-6)
+    for _ in range(10):
+      sim.policy_step()
+    self.assertTrue(torch.isfinite(policy._history).all())
+    sim.reset()
+    self.assertEqual(
+      torch.count_nonzero(policy._history).item(), 0
+    )
+    np.testing.assert_allclose(sim.target, DEFAULT)
+
+  def test_old_him_checkpoint_is_rejected(self):
+    with TemporaryDirectory() as directory:
+      path = Path(directory) / "old_him.pt"
+      torch.save({"actor_state_dict": {
+        "estimator.encoder.0.weight": torch.zeros(128, 270)
+      }}, path)
+      with self.assertRaisesRegex(ValueError, "Incompatible HIM checkpoint"):
+        load_him_policy(path)
 
   def test_non_finite_policy_is_rejected(self):
     class BadPolicy:

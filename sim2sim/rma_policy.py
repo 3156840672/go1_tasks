@@ -179,3 +179,120 @@ def load_paper_amp_student(checkpoint_path: Path) -> PaperAmpStudentActor:
   actor.load_state_dict(checkpoint["student_state_dict"])
   actor.reset()
   return actor.eval()
+
+
+HIM_OBS_DIM = 45
+HIM_HISTORY_STEPS = 6
+HIM_VELOCITY_DIM = 3
+HIM_CONTRACT_VERSION = 2
+
+
+class HimActor(nn.Module):
+  """Inference copy of the HIM policy (history encoder + policy MLP).
+
+  HIMLoco stacks the history newest-first.  This module keeps the same
+  ordering internally, so the caller only feeds the current 45-D
+  proprioceptive observation and the ring buffer is maintained here.
+  """
+
+  def __init__(
+    self,
+    obs_dim: int = HIM_OBS_DIM,
+    history_steps: int = HIM_HISTORY_STEPS,
+    velocity_dim: int = HIM_VELOCITY_DIM,
+    latent_dim: int = 16,
+    encoder_hidden_dims: tuple[int, ...] = (128, 64),
+    hidden_dims: tuple[int, ...] = (512, 256, 128),
+  ) -> None:
+    super().__init__()
+    self.obs_dim = obs_dim
+    self.history_steps = history_steps
+    self.velocity_dim = velocity_dim
+    self.encoder = _mlp(
+      history_steps * obs_dim, velocity_dim + latent_dim, encoder_hidden_dims
+    )
+    self.mlp = _mlp(obs_dim + velocity_dim + latent_dim, ACTION_DIM, hidden_dims)
+    self._history: torch.Tensor | None = None
+
+  def reset(self, batch_size: int = 1) -> None:
+    self._history = torch.zeros(batch_size, self.history_steps, self.obs_dim)
+
+  def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    if self._history is None or self._history.shape[0] != obs.shape[0]:
+      self.reset(obs.shape[0])
+    assert self._history is not None
+    # Newest sample first, matching HIMLoco's observation buffer.
+    self._history = torch.roll(self._history, 1, dims=1)
+    self._history[:, 0] = obs
+    parts = self.encoder(self._history.flatten(1))
+    velocity = parts[..., : self.velocity_dim]
+    latent = torch.nn.functional.normalize(
+      parts[..., self.velocity_dim :], dim=-1, p=2
+    )
+    return self.mlp(torch.cat((obs, velocity, latent), dim=-1))
+
+
+def _mlp(
+  input_dim: int, output_dim: int, hidden_dims: tuple[int, ...]
+) -> nn.Sequential:
+  layers: list[nn.Module] = []
+  width = input_dim
+  for hidden in hidden_dims:
+    layers += [nn.Linear(width, hidden), nn.ELU()]
+    width = hidden
+  layers.append(nn.Linear(width, output_dim))
+  return nn.Sequential(*layers)
+
+
+def _linear_dims(state: dict[str, torch.Tensor], prefix: str) -> tuple[int, ...]:
+  keys = sorted(
+    (key for key in state if key.startswith(prefix) and key.endswith(".weight")),
+    key=lambda key: int(key[len(prefix):].split(".")[0]),
+  )
+  if not keys:
+    raise ValueError(f"Checkpoint has no {prefix} layers")
+  return tuple(state[key].shape[0] for key in keys)
+
+
+def load_him_policy(checkpoint_path: Path) -> HimActor:
+  """Load a HIM checkpoint produced by ``Go2-Velocity-HIM``."""
+  checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+  state = checkpoint.get("actor_state_dict")
+  if not isinstance(state, dict) or "estimator.encoder.0.weight" not in state:
+    raise ValueError("Checkpoint is not a HIM policy")
+  if checkpoint.get("him_contract_version") != HIM_CONTRACT_VERSION:
+    raise ValueError(
+      "Incompatible HIM checkpoint: train a new policy with the corrected "
+      "history, SwAV gradient, and observation scales"
+    )
+  encoder_dims = _linear_dims(state, "estimator.encoder.")
+  mlp_dims = _linear_dims(state, "mlp.")
+  flat_dim = state["estimator.encoder.0.weight"].shape[1]
+  output_dim = encoder_dims[-1]
+  latent_dim = output_dim - HIM_VELOCITY_DIM
+  if flat_dim % HIM_OBS_DIM != 0:
+    raise ValueError(f"Unexpected HIM encoder input: {flat_dim}")
+  history_steps = flat_dim // HIM_OBS_DIM
+  first_mlp_key = min(
+    (key for key in state if key.startswith("mlp.") and key.endswith(".weight")),
+    key=lambda key: int(key[len("mlp."):].split(".")[0]),
+  )
+  if state[first_mlp_key].shape[1] != HIM_OBS_DIM + HIM_VELOCITY_DIM + latent_dim:
+    raise ValueError("HIM encoder/MLP latent dimensions disagree")
+  if mlp_dims[-1] != ACTION_DIM:
+    raise ValueError(f"Policy outputs {mlp_dims[-1]} actions, expected {ACTION_DIM}")
+  actor = HimActor(
+    history_steps=history_steps,
+    latent_dim=latent_dim,
+    encoder_hidden_dims=encoder_dims[:-1],
+    hidden_dims=mlp_dims[:-1],
+  )
+  actor.encoder.load_state_dict(
+    {key[len("estimator.encoder."):]: value for key, value in state.items()
+     if key.startswith("estimator.encoder.")}
+  )
+  actor.mlp.load_state_dict(
+    {key[len("mlp."):]: value for key, value in state.items() if key.startswith("mlp.")}
+  )
+  actor.reset()
+  return actor.eval()

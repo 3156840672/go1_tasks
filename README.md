@@ -4,7 +4,7 @@
 Unitree Go1 和 Go2 任务中，并提供平地、崎岖地形速度跟踪基线。运行所需的 `mjlab`
 框架随仓库打包；克隆后无需额外下载源码即可安装、训练与播放。项目包含
 `rough`、`flat`、`mob`、`amp`、`cts` 五类共享任务；Go2 另外提供单阶段
-Rough AMP 和论文式 AMP 教师/LSTM 学生任务。Go1和Go2各有独立的任务ID，
+Rough AMP、论文式 AMP 教师/LSTM 学生和 HIM 内部模型任务。Go1和Go2各有独立的任务ID，
 并额外提供一套 Go1 RMA 两阶段训练流程。
 
 | key | Go1 任务 ID | Go2 任务 ID | 说明 |
@@ -16,6 +16,7 @@ Rough AMP 和论文式 AMP 教师/LSTM 学生任务。Go1和Go2各有独立的�
 | `rough_amp` | - | `Go2-Velocity-Rough-AMP` | 崎岖地形AMP |
 | `paper_amp_teacher` | - | `Go2-Velocity-Rough-AMP-Teacher` | 论文式特权教师；学生由独立命令蒸馏 |
 | `cts` | `Go1-Velocity-CTS` | `Go2-Velocity-CTS` | 并发师生策略 |
+| `him` | - | `Go2-Velocity-HIM` | 混合内部模型（HIMLoco）：历史编码器 + 速度回归 + SwAV 嵌入 |
 
 Go1 RMA 使用独立的 `go1-train-rma` 命令训练 teacher 和 adaptation module，
 不注册为普通 PPO 任务 ID。
@@ -28,6 +29,7 @@ Go1 RMA 使用独立的 `go1-train-rma` 命令训练 teacher 和 adaptation modu
 | Margolis & Agrawal, [*Walk These Ways: Tuning Robot Control for Generalization with Multiplicity of Behavior* (2023)](https://proceedings.mlr.press/v205/margolis23a.html) | `mob` | 用行为命令调节步态、姿态和摆腿参数，并训练条件化速度跟踪策略。 |
 | Wang et al., [*CTS: Concurrent Teacher-Student Reinforcement Learning for Legged Locomotion* (2024)](https://arxiv.org/abs/2405.10830) | `cts` | 在同一 PPO 训练过程中并发训练特权信息教师和本体感觉历史学生。 |
 | Wu et al., [*Learning Robust and Agile Legged Locomotion Using Adversarial Motion Priors* (2023)](https://doi.org/10.1109/LRA.2023.3290509) | `paper_amp_teacher` + LSTM student | AMP 教师将 30 维特权状态和 187 维地形扫描压缩为 24 维 latent，再用 DAgger 将教师蒸馏到只读 45 维本体观测的 LSTM 学生。 |
+| Long et al., [*Hybrid Internal Model: Learning Agile Legged Locomotion with Simulated Robot Response* (ICLR 2024)](https://arxiv.org/abs/2312.11460) | `him` | 用 6 帧本体历史回归速度，并用 SwAV 对比学习把"下一帧特权状态"压缩为 16 维隐式嵌入；策略输入为当前 45 维观测 + 3 维速度 + 16 维嵌入，部署时不需要任何特权信息。 |
 
 `rough` 和 `flat` 是本项目的 Go1/Go2 速度跟踪基线，不单独声称复现某篇论文。
 `rma`、`mob` 与 `cts` 复现的是上述论文的**核心思路**，并非逐项复现原作者的仿真器、
@@ -93,7 +95,7 @@ uv run go2-list-tasks
 各任务 checkpoint 分别存放在 `logs/rsl_rl/go1_velocity`、`go1_mob`、
 `go1_amp`、`go1_cts`、`go1_rma` 和 `go2_rough`、`go2_flat`、`go2_mob`、
 `go2_amp`、`go2_rough_amp`、`go2_paper_amp_teacher`、
-`go2_paper_amp_student`、`go2_cts`；已有任务的checkpoint路径不变。
+`go2_paper_amp_student`、`go2_cts`、`go2_him`；已有任务的checkpoint路径不变。
 
 ## 训练与播放
 
@@ -143,6 +145,25 @@ uv run go2-train-paper-amp-student \
 运行判别器；它模仿已经学到 AMP 风格的教师。完整流程、网络维度和部署状态
 管理见 [`docs/go2_paper_amp.md`](docs/go2_paper_amp.md)。
 
+Go2 HIM 任务（HIMLoco）只需一条命令即可训练，播放与独立 MuJoCo 验证：
+
+```bash
+uv run go2-train Go2-Velocity-HIM --env.scene.num-envs 1024 \
+  --agent.logger tensorboard --agent.upload-model False
+
+uv run go2-play Go2-Velocity-HIM \
+  --checkpoint-file logs/rsl_rl/go2_him/YOUR_RUN/model_9999.pt \
+  --viewer viser
+
+uv run python sim2sim/go2_sim.py \
+  --him logs/rsl_rl/go2_him/YOUR_RUN/model_9999.pt \
+  --terrain flat --command 0.4 0 0
+```
+
+策略每帧只读 45 维本体观测（命令在最前），控制器维护最近 6 帧的历史；critic
+读取 45 维本体 + 真实线速度 + 扰动代理 + 187 维地形扫描。网络维度、观测索引、
+与参考实现的差异和部署约定见 [`docs/go2_him.md`](docs/go2_him.md)。
+
 Rough AMP 教师的命令范围会在 0、3500、6000 轮分阶段扩大，并在第 6000 轮
 达到完整的 `vx ±1.0 m/s、vy ±0.6 m/s、wz ±1.0 rad/s`。这是因为当前 AMP
 判别器输入包含机身速度，而 OCS2 数据的实测速率低于文件名中的手柄输入值。
@@ -172,8 +193,9 @@ uv run train Mjlab-Velocity-Rough-Unitree-Go1 --env.scene.num-envs 1024
 ```
 
 论文相关任务的详细说明见 [`docs/rma.md`](docs/rma.md)、
-[`docs/cts.md`](docs/cts.md)、[`docs/mob.md`](docs/mob.md) 与
-[`docs/go2_paper_amp.md`](docs/go2_paper_amp.md)。
+[`docs/cts.md`](docs/cts.md)、[`docs/mob.md`](docs/mob.md)、
+[`docs/go2_paper_amp.md`](docs/go2_paper_amp.md) 与
+[`docs/go2_him.md`](docs/go2_him.md)。
 
 使用已训练的 MoB 策略采集 AMP 参考动作、读取数据并运行 AMP 训练，见
 [`docs/amp_tutorial.md`](docs/amp_tutorial.md)；数据字段与采集参数见
@@ -361,6 +383,14 @@ uv run python sim2sim/go2_sim.py --headless --steps 100
 uv run python sim2sim/go2_sim.py \
   --policy logs/rsl_rl/go2_flat/YOUR_RUN/model_9999.pt \
   --terrain flat
+```
+
+HIM 检查点使用 `--him`；策略模块内部维护 6 帧历史缓冲，复位时清空：
+
+```bash
+uv run python sim2sim/go2_sim.py \
+  --him logs/rsl_rl/go2_him/YOUR_RUN/model_9999.pt \
+  --terrain rough --command 0.4 0 0
 ```
 
 论文式 LSTM 学生使用 `--student`；仿真复位时会同步清空 hidden/cell：

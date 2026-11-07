@@ -20,7 +20,10 @@ import torch
 from go1_sim import Joystick
 from rma_policy import (
   ACTION_DIM,
+  HIM_OBS_DIM,
   OBS_DIM,
+  HimActor,
+  load_him_policy,
   load_paper_amp_student,
   load_standard_policy,
 )
@@ -118,6 +121,7 @@ class Simulator:
     terrain: str = "flat",
     terrain_seed: int = 42,
     student: Path | None = None,
+    him: Path | None = None,
   ) -> None:
     self.model = make_model(terrain, terrain_seed)
     self.data = mujoco.MjData(self.model)
@@ -152,8 +156,9 @@ class Simulator:
     assert all(
       i >= 0 for i in (*self.qadr, *self.vadr, *self.aid, self.lin_id, self.ang_id)
     )
-    if policy is not None and student is not None:
-      raise ValueError("Use either a feed-forward --policy or an LSTM --student")
+    sources = [path for path in (policy, student, him) if path is not None]
+    if len(sources) > 1:
+      raise ValueError("Use only one of --policy, --student or --him")
     self.policy = None
     if policy is not None:
       self.policy = load_standard_policy(
@@ -161,6 +166,8 @@ class Simulator:
       )
     elif student is not None:
       self.policy = load_paper_amp_student(student)
+    elif him is not None:
+      self.policy = load_him_policy(him)
     self.command = np.zeros(3, dtype=np.float32)
     self.active = False
     self.last_action = np.zeros(ACTION_DIM, dtype=np.float32)
@@ -202,7 +209,18 @@ class Simulator:
       self.last_action,
       self.command,
     )
-    if obs_dim == OBS_DIM:
+    if isinstance(self.policy, HimActor):
+      # HIM keeps the command first and expects the caller to feed the
+      # current step only; the ring buffer lives inside the policy module.
+      components = (
+        self.command * np.array((2.0, 2.0, 0.25), dtype=np.float32),
+        ang * 0.25,
+        gravity,
+        self.data.qpos[self.qadr] - DEFAULT,
+        self.data.qvel[self.vadr] * 0.05,
+        self.last_action,
+      )
+    elif obs_dim == OBS_DIM:
       components = (lin, *components)
     elif obs_dim != AMP_OBS_DIM:
       raise ValueError(f"Unsupported Go2 policy observation dimension: {obs_dim}")
@@ -256,6 +274,11 @@ def main() -> None:
     type=Path,
     help="Paper AMP LSTM student_*.pt checkpoint",
   )
+  parser.add_argument(
+    "--him",
+    type=Path,
+    help="HIM (Go2-Velocity-HIM) model_*.pt checkpoint",
+  )
   parser.add_argument("--headless", action="store_true")
   parser.add_argument(
     "--steps", type=int, default=1000, help="Physics steps in headless mode"
@@ -277,13 +300,14 @@ def main() -> None:
     parser.error("--steps must be positive")
   if any(abs(v) > limit for v, limit in zip(args.command, COMMAND_LIMITS)):
     parser.error("--command limits: |vx| <= 1.0; |vy| <= 0.6; |wz| <= 1.0")
-  if args.policy is not None and args.student is not None:
-    parser.error("Use either --policy or --student")
+  if sum(path is not None for path in (args.policy, args.student, args.him)) > 1:
+    parser.error("Use only one of --policy, --student or --him")
   sim = Simulator(
     policy=args.policy,
     terrain=args.terrain,
     terrain_seed=args.terrain_seed,
     student=args.student,
+    him=args.him,
   )
   keyboard_command = np.array(args.command, dtype=np.float32)
   sim.command[:] = keyboard_command

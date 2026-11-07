@@ -90,6 +90,17 @@ PYTHONPATH=sim2sim uv run python sim2sim/go2_sim.py \
   --terrain rough --command 0.4 0 0
 ```
 
+Go2 HIM 策略使用 `--him`。程序维护最近 6 帧、每帧 45 维的历史（最新帧在前），
+在仿真复位时清空；观测顺序为命令、角速度、投影重力、关节角、关节速度、上一动作。
+命令按 `[2.0, 2.0, 0.25]`、角速度按 `0.25`、关节速度按 `0.05` 缩放，
+与训练环境和 `him_actor_observation()` 一致。旧版未缩放的 HIM 检查点需要重新训练：
+
+```bash
+PYTHONPATH=sim2sim uv run python sim2sim/go2_sim.py \
+  --him logs/rsl_rl/go2_him/YOUR_RUN/model_9999.pt \
+  --terrain rough --command 0.4 0 0
+```
+
 无检查点时运行 `--headless --steps 100` 只验证模型、地形、执行器与观测接口，
 机器人保持被动站姿。Go2 Rough 的 235 维高度扫描策略和 CTS 策略目前不受
 `go2_sim.py` 支持。键盘与手柄操作与 `go1_sim.py` 相同。
