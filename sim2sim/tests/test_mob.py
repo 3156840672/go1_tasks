@@ -6,7 +6,14 @@ import mujoco
 import numpy as np
 import torch
 
-from go1_mob_sim import (
+from quadruped_sim.policies.mob import (
+  ACTION_DIM,
+  OBS_DIM,
+  MobActor,
+  load_mob_policy,
+)
+from quadruped_sim.robots.go1 import DEFAULT, make_model
+from quadruped_sim.robots.go1_mob import (
   ACTION_SCALE,
   GAITS,
   HISTORY_LENGTH,
@@ -14,8 +21,6 @@ from go1_mob_sim import (
   MobGamepadControls,
   MobSimulator,
 )
-from go1_sim import DEFAULT, make_model
-from mob_policy import ACTION_DIM, OBS_DIM, MobActor, load_mob_policy
 
 
 class MobSimTests(unittest.TestCase):

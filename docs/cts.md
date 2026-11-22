@@ -195,6 +195,56 @@ the terrain generator also changes play terrain immediately. Existing
 checkpoints, including `model_8499.pt`, require further training and evaluation
 before expecting better behavior.
 
+## sim2sim
+
+CTS 的 actor 输入是 77 维：45 维本体观测拼 32 维隐变量，隐变量由特权编码器
+（259 维 critic 观测）或学生编码器（`cts_history`，5 帧 × 45 维）给出。部署只走
+学生分支，这一分支在 run 目录的两个文件里都存在：
+
+- `<run>.onnx`：训练结束由 `VelocityOnPolicyRunner.save()` 导出，学生编码器 +
+  L2 归一化 + 策略头打成一个双输入图 `proprio (1,45)`、`history (1,225)` →
+  `actions (1,12)`，适合交给机器人侧任一 ONNX 运行时。
+- `model_*.pt`：`actor_state_dict` 含 `student_encoder.*`（225→512→256→32）、
+  `mlp.*`（77→512→256→128→12）和 `distribution.std_param`，不含
+  `obs_normalizer.*` 时观测不归一化。sim2sim 用它重建同样的计算，实测与 ONNX
+  导出在同一批 200 帧随机观测上动作最大差 `1.9e-6`。
+
+`go1_sim.py` / `go2_sim.py` 的 `--cts` 两种都收：
+
+```bash
+uv run python sim2sim/go1_sim.py \
+  --cts logs/rsl_rl/go1_cts/YOUR_RUN/YOUR_RUN.onnx \
+  --terrain rough --command 0.5 0 0
+
+uv run python sim2sim/go2_sim.py \
+  --cts logs/rsl_rl/go2_cts/YOUR_RUN/model_9999.pt \
+  --terrain go2_rough --terrain-type all --terrain-level 6 \
+  --terrain-column open_stairs --command 0.5 0 0
+```
+
+`.onnx` 只在保存 checkpoint 时导出，所以它对应 run 目录里最后一个 `model_*.pt`；
+中间的 checkpoint 行为可能不同（Go1 `model_6000.pt` 在 `--terrain rough` 上
+`vx +0.205`，6300 和它的导出都是 `+0.456`）。
+
+`--cts` 与 `--policy`、`--student`、`--him`、`--teacher`+`--adapter` 互斥。误把
+CTS 的 `.pt` 传给 `--policy` 会得到 `Policy expects 77 observations` 并提示改用
+`--cts`。用 `.pt` 重建时激活函数按本仓库 CTS 任务统一的 ELU 处理（checkpoint 不
+记录这一项），带 `obs_normalizer.*` 的 checkpoint 按 rsl-rl 的
+`(x - mean) / (std + 0.01)` 归一化本体观测。
+
+自己写部署代码时，历史缓冲必须按 mjlab 的布局喂：**每个 term 各自 5 帧、term 之间
+串联**（角速度 5×3 → 重力 5×3 → 关节角 5×12 → 关节速度 5×12 → 上一动作 5×12 →
+指令 5×3），段内从旧到新，复位后第一次推入回填满 5 帧。用「5 帧 × 45 维」的
+frame-major 也能跑，但策略会明显横漂。
+
+sim2sim 实测（400 步、取后半段均值，`go2_cts/2026-10-31_10-43-13`，指令
+`0.5 0 0`）：平地 `vx +0.511`（误差 `0.011`）；`go2_rough` 第 6 级 `open_stairs`
+格 `vx +0.521`（误差 `0.021`）；`perlin_noise` 第 7 级 `vx +0.471`。偏航是指令
+弱项：`0 0 0.5` 只得到 `wz +0.264`，换成同场景的 AMP 检查点更低（`+0.013`），
+说明差距主要在独立 MuJoCo 场景的执行器/摩擦标定，而不是 CTS 训练。Go1 CTS 在
+`--terrain rough` 上 `vx +0.456`、误差 `0.044`，但偏航漂移 `+0.359 rad/s`，评估
+地形能力前先在平地上核对指令响应。
+
 ## Differences from the paper
 
 The paper trains on Isaac Gym with its own terrain mix, reward table, complete

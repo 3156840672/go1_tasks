@@ -42,7 +42,40 @@ HIM 的出发点是内部模型控制（IMC）：控制器不必显式识别外�
 | 策略 + 估计器组合 | `modules/him_actor_critic.py` | `him.py::HIMActor` |
 | PPO + 估计器优化 | `algorithms/him_ppo.py` | `him.py::HIMPPO` |
 | 特权观测与历史缓冲 | `legged_gym/envs/base/legged_robot.py` | `src/go2_tasks/env_cfgs.py::unitree_go2_him_env_cfg` |
-| 部署网络 | `play.py` 导出 | `him.py::_HIMExport`、`sim2sim/rma_policy.py::HimActor` |
+| 部署网络 | `play.py` 导出 | `him.py::_HIMExport`、`sim2sim/quadruped_sim/policies/go2.py::HimActor` |
+
+### 2.1 训练地形
+
+崎岖地形课程在 mjlab 的 rough 预设上扩充到 14 种，定义在
+`src/go2_tasks/terrains.py::blind_rough_terrains`，由
+`unitree_go2_rough_env_cfg` 装配（仅 Go2，Go1 与 mjlab 的全局预设不受影响）：
+
+| 地形 | 占比 | 说明 |
+| --- | ---: | --- |
+| `flat` | 0.10 | 平地 |
+| `pyramid_stairs` / `_inv` | 0.10 / 0.10 | 上/下金字塔台阶 |
+| `hf_pyramid_slope` / `_inv` | 0.07 / 0.07 | 上/下坡高度场 |
+| `random_rough` | 0.07 | 随机起伏 |
+| `wave_terrain` | 0.07 | 正弦波纹 |
+| `discrete_obstacles` | 0.06 | 随机凸起与凹坑 |
+| `box_random_grid` | 0.06 | 方格起伏（±h） |
+| `random_spread_boxes` | 0.06 | 地面散落矮箱 |
+| `open_stairs` | 0.06 | 无立板楼梯 |
+| `random_stairs` | 0.06 | 随机阶高楼梯 |
+| `tilted_grid` | 0.06 | 倾斜/错位方格 |
+| `perlin_noise` | 0.06 | Perlin 平滑丘陵 |
+
+选型原则是**只用本体感知可穿越**的地形：所有高度上限压在
+`MAX_BLIND_OBSTACLE_HEIGHT = 0.14 m`（约小腿长 0.22 m 的 0.64 倍），落点间距留足，
+因此 45 维历史策略能靠足端接触学会它们；`stepping_stones`、`narrow_beams`、
+高障碍这类必须靠外部感知的地形一律不加入。难度仍随课程缩放高度（`open_stairs`
+还会收窄踏面），每种地形在 0–9 级都有可用梯度。
+
+`tilted_grid` 预设默认用一圈顶面高出地面 0.2 m 的边框把格子围起来，从邻格进去等于
+翻一堵比本集合任何障碍都高的墙，所以这里把该预设新加的 `border_height` 设成 0
+（`BoxTiltedGridTerrainCfg.border_height`），只保留瓦片本身 ±`height_range` 的起伏。
+`tools/export_sim2sim_terrain.py` 导出时还会再测一圈每个格子的边界高度、把整圈悬空
+的地形沉到 0，两边因此是平的。
 
 ## 3. 观测布局（严格按索引）
 
@@ -281,7 +314,7 @@ obs45 = him_actor_observation(
 | `Go2-Velocity-HIM`（本任务） | 4000 | 0.176 |
 | `Go2-Velocity-CTS` | 10000 | 0.087 |
 | `Go2-Velocity-AMP`（平地） | 2650 | 0.120 |
-| `Go2-Velocity-Rough`（带高度扫描） | 2500 | 0.353 |
+| `Go2-Velocity-Rough`（旧配置，带高度扫描） | 2500 | 0.353 |
 
 注意各任务的命令范围与训练轮数不同，本表只用于同一评测器下的量级对照。
 HIM 训练轮数只有 CTS 的 40%。原表的 `error_vel_yaw` 误用了机体线速度 z

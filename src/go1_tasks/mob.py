@@ -98,11 +98,12 @@ class BehaviorCommand(CommandTerm):
         *bounds
       )
 
-  def _update_command(self) -> None:
-    self.cycle = torch.remainder(
-      self.cycle + self._env.step_dt * self.values[:, 3], 1.0
+  def _update_command(self, env_ids: torch.Tensor | None = None) -> None:
+    ids = slice(None) if env_ids is None else env_ids
+    self.cycle[ids] = torch.remainder(
+      self.cycle[ids] + self._env.step_dt * self.values[ids, 3], 1.0
     )
-    if self._gui_controls is not None:
+    if self._gui_controls is not None and env_ids is None:
       gait, sliders = self._gui_controls
       assert self._gui_env_idx is not None
       idx = self._gui_env_idx()

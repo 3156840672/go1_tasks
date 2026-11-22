@@ -7,16 +7,25 @@ import torch
 
 import mujoco
 
-from go1_sim import ACTION_SCALE, DEFAULT, JOINTS, Joystick, Simulator, make_model
-from rma_policy import (
+from quadruped_sim.joystick import Joystick
+from quadruped_sim.policies.actor import (
   ACTION_DIM,
+  StandardActor,
+  load_standard_policy,
+)
+from quadruped_sim.policies.rma import (
   HISTORY_LENGTH,
   LATENT_DIM,
   OBS_DIM,
   Actor,
   Adapter,
-  StandardActor,
-  load_standard_policy,
+)
+from quadruped_sim.robots.go1 import (
+  ACTION_SCALE,
+  DEFAULT,
+  JOINTS,
+  Go1Simulator,
+  make_model,
 )
 
 
@@ -43,6 +52,8 @@ class SimTests(unittest.TestCase):
       ground_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "ground")
       self.assertGreaterEqual(ground_id, 0)
       self.assertEqual(model.geom_type[ground_id], expected_type)
+      self.assertAlmostEqual(model.stat.extent * model.vis.map.znear, 0.05, places=4)
+      self.assertAlmostEqual(model.stat.extent * model.vis.map.zfar, 400.0, places=3)
       if terrain != "flat":
         self.assertGreater(np.ptp(model.hfield_data), 0.0)
 
@@ -65,7 +76,7 @@ class SimTests(unittest.TestCase):
     self.assertEqual(tuple(action.shape), (1, ACTION_DIM))
 
   def test_scene_observations_and_history(self):
-    sim = Simulator(None, None)
+    sim = Go1Simulator(None, None)
     self.assertEqual(len(JOINTS), ACTION_DIM)
     self.assertEqual(sim.model.nu, ACTION_DIM)
     np.testing.assert_allclose(sim.data.qpos[sim.qadr], DEFAULT)

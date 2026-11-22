@@ -1,0 +1,37 @@
+{
+  "mjlab_version": "1.6.0",
+  "seed": 42,
+  "columns": [
+    "flat",
+    "pyramid_stairs",
+    "pyramid_stairs_inv",
+    "hf_pyramid_slope",
+    "hf_pyramid_slope_inv",
+    "random_rough",
+    "wave_terrain",
+    "discrete_obstacles",
+    "box_random_grid",
+    "random_spread_boxes",
+    "open_stairs",
+    "random_stairs",
+    "tilted_grid",
+    "perlin_noise"
+  ],
+  "rows": 10,
+  "levels": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "shape": [
+    4,
+    4
+  ]
+}

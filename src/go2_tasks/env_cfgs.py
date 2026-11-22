@@ -41,10 +41,11 @@ from .him import (
   PROPRIO_DIM,
 )
 from .him_commands import HimVelocityCommandCfg
+from .dreamwaq import HISTORY_STEPS as DREAMWAQ_HISTORY_STEPS
 from .paper_amp import paper_privileged_state
 from . import paper_rewards
 from .paper_curriculum import terrain_levels_from_tracking
-from .terrains import CurriculumRandomRoughTerrainCfg
+from .terrains import CurriculumRandomRoughTerrainCfg, add_blind_rough_terrains
 
 
 GO2_DR_BODY_NAMES = (BASE_BODY_NAME, ".*_hip", ".*_thigh", ".*_calf")
@@ -165,13 +166,51 @@ def _apply_go2_profile(cfg: ManagerBasedRlEnvCfg) -> ManagerBasedRlEnvCfg:
 
 
 def unitree_go2_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
-  """Create the Unitree Go2 rough-terrain velocity task."""
-  return _apply_go2_profile(unitree_go1_rough_env_cfg(play=play))
+  """Create the blind Unitree Go2 rough-terrain velocity task.
+
+  The deployable actor sees the 45-D proprioceptive vector only: no base linear
+  velocity and no 187-D terrain scan, so it transfers without a perception
+  stack and has the same layout as the AMP actor.  The critic keeps both, which
+  makes this asymmetric PPO.  The terrain mix is the blind one, whose obstacles
+  are crossable from foot contact alone; see ``go2_tasks.terrains``.
+  """
+  cfg = add_blind_rough_terrains(
+    _apply_go2_profile(unitree_go1_rough_env_cfg(play=play))
+  )
+  actor = cfg.observations["actor"]
+  actor.terms.pop("base_lin_vel")
+  actor.terms.pop("height_scan")
+  actor.history_length = 1
+  return cfg
 
 
 def unitree_go2_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create the Unitree Go2 flat-terrain velocity task."""
   return _apply_go2_profile(unitree_go1_flat_env_cfg(play=play))
+
+
+def unitree_go2_dreamwaq_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Go2 Rough physics and rewards with the DreamWaQ observation contract."""
+  cfg = unitree_go2_rough_env_cfg(play=play)
+  actor = cfg.observations["actor"]
+  actor.history_length = DREAMWAQ_HISTORY_STEPS
+  source = cfg.observations["critic"].terms
+  cfg.observations["critic"] = ObservationGroupCfg(
+    terms={
+      **{name: deepcopy(source[name]) for name in actor.terms},
+      "base_lin_vel": deepcopy(source["base_lin_vel"]),
+      # Rough applies disturbances by changing velocity. Use body acceleration
+      # as the critic's disturbance cue.
+      "base_lin_acc": ObservationTermCfg(
+        func=envs_mdp.builtin_sensor,
+        params={"sensor_name": "robot/imu_lin_acc"},
+      ),
+      "height_scan": deepcopy(source["height_scan"]),
+    },
+    concatenate_terms=True,
+    enable_corruption=False,
+  )
+  return cfg
 
 
 def unitree_go2_mob_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -223,6 +262,8 @@ def unitree_go2_amp_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
 def unitree_go2_rough_amp_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create blind single-stage Go2 AMP on curriculum rough terrain."""
+  # The rough task already makes the actor blind; the critic keeps the 187-D
+  # terrain scan for asymmetric PPO rather than a teacher policy.
   cfg = unitree_go2_rough_env_cfg(play=play)
   generator = cfg.scene.terrain.terrain_generator
   assert generator is not None
@@ -234,13 +275,6 @@ def unitree_go2_rough_amp_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   if not play:
     assert cfg.scene.terrain is not None
     cfg.scene.terrain.max_init_terrain_level = 0
-
-  # Keep the deployable 45-D actor blind. The critic may use the 187-D terrain
-  # scan during training, which is asymmetric PPO rather than a teacher policy.
-  actor = cfg.observations["actor"]
-  actor.terms.pop("base_lin_vel")
-  actor.terms.pop("height_scan")
-  actor.history_length = 1
 
   flat_amp = unitree_go2_amp_env_cfg(play=play)
   cfg.commands["twist"] = deepcopy(flat_amp.commands["twist"])
@@ -407,22 +441,40 @@ def unitree_go2_paper_amp_env_cfg(
     )
   if not baseline:
     # Table I terms use physical quantities, not normalized policy actions.
-    safety = {name: deepcopy(cfg.rewards[name]) for name in
-              ("self_collisions", "shank_collision", "trunk_head_collision", "dof_pos_limits")}
+    safety_names = (
+      "self_collisions",
+      "shank_collision",
+      "trunk_head_collision",
+      "dof_pos_limits",
+    )
+    safety = {name: deepcopy(cfg.rewards[name]) for name in safety_names}
     cfg.rewards = {
-      "track_linear_velocity": RewardTermCfg(func=paper_rewards.planar_tracking, weight=1.,
-        params={"command_name":"twist", "std":math.sqrt(.15)}),
-      "track_angular_velocity": RewardTermCfg(func=paper_rewards.yaw_tracking, weight=.5,
-        params={"command_name":"twist", "std":math.sqrt(.15)}),
+      "track_linear_velocity": RewardTermCfg(
+        func=paper_rewards.planar_tracking,
+        weight=1.0,
+        params={"command_name": "twist", "std": math.sqrt(0.15)},
+      ),
+      "track_angular_velocity": RewardTermCfg(
+        func=paper_rewards.yaw_tracking,
+        weight=0.5,
+        params={"command_name": "twist", "std": math.sqrt(0.15)},
+      ),
       # The per-step four-foot stride term has a -2 standing baseline.
       # Offset it for alive episodes so shortening an episode is not rewarded.
-      "alive": RewardTermCfg(func=envs_mdp.is_alive, weight=2.),
-      "failure": RewardTermCfg(func=envs_mdp.is_terminated, weight=-2.),
+      "alive": RewardTermCfg(func=envs_mdp.is_alive, weight=2.0),
+      "failure": RewardTermCfg(func=envs_mdp.is_terminated, weight=-2.0),
       "joint_torques": RewardTermCfg(func=envs_mdp.joint_torques_l2, weight=-1e-4),
-      "joint_acceleration": RewardTermCfg(func=envs_mdp.joint_acc_l2, weight=-2.5e-7),
-      "joint_position_change": RewardTermCfg(func=paper_rewards.joint_position_change, weight=-.1),
-      "stride_duration": RewardTermCfg(func=paper_rewards.stride_duration, weight=1.,
-        params={"command_name":"twist", "sensor_name":"feet_ground_contact"}),
+      "joint_acceleration": RewardTermCfg(
+        func=envs_mdp.joint_acc_l2, weight=-2.5e-7
+      ),
+      "joint_position_change": RewardTermCfg(
+        func=paper_rewards.joint_position_change, weight=-0.1
+      ),
+      "stride_duration": RewardTermCfg(
+        func=paper_rewards.stride_duration,
+        weight=1.0,
+        params={"command_name": "twist", "sensor_name": "feet_ground_contact"},
+      ),
       **safety,
     }
   # The deployable observation remains exactly the existing 45-D AMP vector.

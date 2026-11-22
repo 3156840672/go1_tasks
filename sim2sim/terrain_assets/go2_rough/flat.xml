@@ -1,0 +1,33 @@
+<mujoco model="MuJoCo Model">
+  <compiler angle="radian"/>
+
+  <worldbody>
+    <site name="spawn_level_0" pos="-36 0 0" size="0.01" rgba="0 0 0 0"/>
+    <site name="spawn_level_1" pos="-28 0 0" size="0.01" rgba="0 0 0 0"/>
+    <site name="spawn_level_2" pos="-20 0 0" size="0.01" rgba="0 0 0 0"/>
+    <site name="spawn_level_3" pos="-12 0 0" size="0.01" rgba="0 0 0 0"/>
+    <site name="spawn_level_4" pos="-4 0 0" size="0.01" rgba="0 0 0 0"/>
+    <site name="spawn_level_5" pos="4 0 0" size="0.01" rgba="0 0 0 0"/>
+    <site name="spawn_level_6" pos="12 0 0" size="0.01" rgba="0 0 0 0"/>
+    <site name="spawn_level_7" pos="20 0 0" size="0.01" rgba="0 0 0 0"/>
+    <site name="spawn_level_8" pos="28 0 0" size="0.01" rgba="0 0 0 0"/>
+    <site name="spawn_level_9" pos="36 0 0" size="0.01" rgba="0 0 0 0"/>
+    <body name="terrain">
+      <geom name="terrain_0" size="4 4 0.5" pos="-36 0 -0.5" type="box" mass="0"/>
+      <geom name="terrain_1" size="4 4 0.5" pos="-28 0 -0.5" type="box" mass="0"/>
+      <geom name="terrain_2" size="4 4 0.5" pos="-20 0 -0.5" type="box" mass="0"/>
+      <geom name="terrain_3" size="4 4 0.5" pos="-12 0 -0.5" type="box" mass="0"/>
+      <geom name="terrain_4" size="4 4 0.5" pos="-4 0 -0.5" type="box" mass="0"/>
+      <geom name="terrain_5" size="4 4 0.5" pos="4 0 -0.5" type="box" mass="0"/>
+      <geom name="terrain_6" size="4 4 0.5" pos="12 0 -0.5" type="box" mass="0"/>
+      <geom name="terrain_7" size="4 4 0.5" pos="20 0 -0.5" type="box" mass="0"/>
+      <geom name="terrain_8" size="4 4 0.5" pos="28 0 -0.5" type="box" mass="0"/>
+      <geom name="terrain_9" size="4 4 0.5" pos="36 0 -0.5" type="box" mass="0"/>
+      <geom name="terrain_10" size="60 10 0.5" pos="0 14 -0.5" type="box" mass="0" rgba="0.2 0.2 0.2 1"/>
+      <geom name="terrain_11" size="60 10 0.5" pos="0 -14 -0.5" type="box" mass="0" rgba="0.2 0.2 0.2 1"/>
+      <geom name="terrain_12" size="10 4 0.5" pos="-50 0 -0.5" type="box" mass="0" rgba="0.2 0.2 0.2 1"/>
+      <geom name="terrain_13" size="10 4 0.5" pos="50 0 -0.5" type="box" mass="0" rgba="0.2 0.2 0.2 1"/>
+      <light pos="0 0 48" dir="0 0 -1" type="directional"/>
+    </body>
+  </worldbody>
+</mujoco>

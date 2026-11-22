@@ -63,7 +63,7 @@ def test_go2_task_family_registered() -> None:
     assert cfg.scene.entities["robot"].init_state.pos[2] == 0.38
     if key in ("amp", "rough_amp", "paper_amp_teacher"):
       twist = cfg.commands["twist"]
-      if key in ("amp", "paper_amp_teacher"):
+      if key == "amp":
         assert twist.ranges.lin_vel_x == (-1.0, 1.0)
         assert twist.ranges.lin_vel_y == (-0.6, 0.6)
         assert twist.ranges.ang_vel_z == (-1.0, 1.0)
@@ -72,7 +72,7 @@ def test_go2_task_family_registered() -> None:
         assert twist.ranges.lin_vel_y == (-0.2, 0.2)
         assert twist.ranges.ang_vel_z == (-0.55, 0.55)
       assert twist.rel_standing_envs == 0.05
-      assert cfg.rewards["track_angular_velocity"].weight == (0.5 if key == "paper_amp_teacher" else 2.0)
+      assert cfg.rewards["track_angular_velocity"].weight == 2.0
       assert math.isclose(
         cfg.rewards["track_angular_velocity"].params["std"], math.sqrt(0.15)
       )
@@ -91,17 +91,32 @@ def test_go2_task_family_registered() -> None:
       assert cfg.scene.terrain.terrain_generator is not None
       assert cfg.scene.terrain.max_init_terrain_level == 0
       assert "terrain_levels" in cfg.curriculum
-      if key == "paper_amp_teacher":
-        assert "command_vel" not in cfg.curriculum
-        assert twist.heading_command
-        assert twist.rel_heading_envs == 1.0
-        assert twist.resampling_time_range == (20.0, 20.0)
-      else:
-        assert "command_vel" in cfg.curriculum
+      # The registered paper teacher is the baseline variant. The wide,
+      # heading-controlled variant is available through its config function.
+      assert "command_vel" in cfg.curriculum
+      assert not twist.heading_command
     if key == "cts":
       articulation = cfg.scene.entities["robot"].articulation
       assert articulation is not None
       assert all(a.delay_max_lag == 4 for a in articulation.actuators)
+
+
+def test_go2_rough_actor_is_blind() -> None:
+  """The deployable rough actor must match the AMP 45-D layout."""
+  cfg = load_env_cfg(TASK_IDS["rough"])
+  actor = cfg.observations["actor"]
+  assert tuple(actor.terms) == (
+    "base_ang_vel",
+    "projected_gravity",
+    "joint_pos",
+    "joint_vel",
+    "actions",
+    "command",
+  )
+  assert actor.history_length == 1
+  critic = cfg.observations["critic"].terms
+  assert "base_lin_vel" in critic
+  assert "height_scan" in critic
 
 
 def test_go2_randomization_skips_massless_feet() -> None:

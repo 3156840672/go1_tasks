@@ -86,9 +86,11 @@ GO2_ARTICULATION = EntityArticulationInfoCfg(
 
 GO2_COLLISION = CollisionCfg(
   geom_names_expr=(".*_collision.*",),
+  contype=1,
+  conaffinity=1,
   solref=(0.01, 1),
   condim={r".*_foot_collision": 6, r".*_collision.*": 1},
-  priority={r".*_foot_collision": 1},
+  priority={r".*_foot_collision": 1, r".*": 0},
   friction={r".*_foot_collision": (1.0, 5e-3, 5e-4)},
 )
 

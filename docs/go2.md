@@ -24,6 +24,12 @@ Go2提供Rough、Flat、MoB、AMP、Rough AMP、论文式 AMP 教师和 CTS。AM
 `logs/amp/go2_reference` 下的全部类别；读取器会递归加载所有 `.npz`，
 因此不能与 Go1 动作混放。
 
+`Go2-Velocity-Rough` 是盲策略：actor 只吃 45 维本体观测（机体系角速度、投影重力、
+关节角、关节角速度、上一步动作、速度指令），不含机身线速度和 187 维地形扫描；
+critic 保留这两者并额外包含足端高度/腾空/触地/接触力，共 259 维，属于非对称
+PPO。因此它的观测布局与 AMP 完全一致，导出的策略可以直接走 sim2sim 的 45 维
+通道。
+
 ### 从 OCS2 采集多步态参考动作
 
 当前参考集为 50 Hz、每段截取 4.5 s，按 OCS2 实际支持的步态组织：
@@ -257,6 +263,14 @@ uv run python sim2sim/go2_sim.py \
 ```
 
 无检查点时机器人保持被动站姿，用于检查模型、地形和执行器接口。`go2_sim.py`
-会自动识别48维Flat或45维AMP/Rough AMP策略；Rough AMP可选择`--terrain rough`
-测试独立MuJoCo地形。CTS策略需要单独的推理适配。真机部署前应先在sim2sim中验证，并保留急停、通信超时、
+会自动识别48维Flat或45维AMP/Rough/Rough AMP策略；Rough AMP可选择`--terrain rough`
+测试独立MuJoCo地形。CTS 用 `--cts` 指向 `<run>.onnx` 或 run 目录里的
+`model_*.pt`（checkpoint 内含学生编码器，重建结果与导出图等价）：
+
+```bash
+uv run python sim2sim/go2_sim.py \
+  --cts logs/rsl_rl/go2_cts/YOUR_RUN/YOUR_RUN.onnx \
+  --terrain go2_rough --terrain-type all --terrain-level 6 \
+  --terrain-column open_stairs --command 0.5 0 0
+```真机部署前应先在sim2sim中验证，并保留急停、通信超时、
 姿态保护、关节软限位、速度限制和力矩饱和。

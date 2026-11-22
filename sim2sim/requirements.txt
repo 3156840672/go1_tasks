@@ -1,3 +1,5 @@
 numpy
 mujoco>=3.3
 torch>=2.0
+# Only needed by --cts with a '<run>.onnx' export; 'model_*.pt' needs no extra.
+onnx

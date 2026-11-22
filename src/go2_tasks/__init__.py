@@ -23,6 +23,7 @@ from .env_cfgs import (
   GO2_PAPER_AMP_REFERENCE_PATH,
   unitree_go2_amp_env_cfg,
   unitree_go2_cts_env_cfg,
+  unitree_go2_dreamwaq_env_cfg,
   unitree_go2_flat_env_cfg,
   unitree_go2_him_env_cfg,
   unitree_go2_mob_env_cfg,
@@ -31,6 +32,7 @@ from .env_cfgs import (
   unitree_go2_rough_amp_env_cfg,
   unitree_go2_rough_env_cfg,
 )
+from .dreamwaq import DreamWaQPpoCfg, DreamWaQRunner
 
 
 def _rl_cfg(kind: str) -> RslRlBaseRunnerCfg:
@@ -41,6 +43,13 @@ def _rl_cfg(kind: str) -> RslRlBaseRunnerCfg:
     cfg.actor.class_name = "go1_tasks.cts.CTSActor"
     cfg.algorithm = CtsPpoAlgorithmCfg(**asdict(cfg.algorithm))
     cfg.algorithm.class_name = "go1_tasks.cts.CTSPPO"
+  elif kind == "dreamwaq":
+    cfg.obs_groups = {"actor": ("actor",), "critic": ("critic",)}
+    cfg.max_iterations = 1000
+    cfg.clip_actions = 100.0
+    cfg.actor.class_name = "go2_tasks.dreamwaq.DreamWaQActor"
+    cfg.algorithm = DreamWaQPpoCfg(**asdict(cfg.algorithm))
+    cfg.algorithm.class_name = "go2_tasks.dreamwaq.DreamWaQPPO"
   elif kind == "him":
     # HIMLoco: deployable actor reads only a 6-step proprio history; the
     # estimator is trained inside HIMPPO against the privileged critic obs.
@@ -102,6 +111,7 @@ _SPECS = {
   "paper_amp_teacher": (unitree_go2_paper_amp_baseline_env_cfg, VelocityOnPolicyRunner),
   "cts": (unitree_go2_cts_env_cfg, VelocityOnPolicyRunner),
   "him": (unitree_go2_him_env_cfg, VelocityOnPolicyRunner),
+  "dreamwaq": (unitree_go2_dreamwaq_env_cfg, DreamWaQRunner),
 }
 
 TASK_IDS = {
@@ -113,6 +123,7 @@ TASK_IDS = {
   "paper_amp_teacher": "Go2-Velocity-Rough-AMP-Teacher",
   "cts": "Go2-Velocity-CTS",
   "him": "Go2-Velocity-HIM",
+  "dreamwaq": "Go2-Velocity-DreamWaQ",
 }
 
 

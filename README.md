@@ -41,15 +41,13 @@ Go1 RMA 使用独立的 `go1-train-rma` 命令训练 teacher 和 adaptation modu
 
 项目结构：
 
-- `src/go1_tasks/`：Go1 任务以及当前两款机器人复用的算法实现。
-- `src/go2_tasks/`：Go2 任务、机器人 profile 与自包含 Go2 资产。
-- `framework/mjlab/`：面向本项目裁剪的 `mjlab` 框架，只保留通用仿真、
+- [`src/go1_tasks/`](src/go1_tasks/README.md)：Go1 任务以及当前两款机器人复用的算法实现。
+- [`src/go2_tasks/`](src/go2_tasks/README.md)：Go2 任务、机器人 profile 与自包含 Go2 资产。
+- [`framework/mjlab/`](framework/mjlab/README.md)：基于上游 1.6.0 的本地 `mjlab` 框架，只保留通用仿真、
   环境、地形、传感器、RL 组件和 Unitree Go1 资产；以 uv workspace 成员的
   形式随本项目一起安装。
-- `vendor/mujoco_warp/`：vendored 的 `mujoco-warp` 源码，安装时不依赖
-  GitHub 拉取。
-- `sim2sim/`：独立 MuJoCo 推理场景、Go1/Go2 模型、地形资源与部署测试。
-- `docs/`、`tests/`：文档与训练任务测试。
+- [`sim2sim/`](sim2sim/README.md)：独立 MuJoCo 推理场景、Go1/Go2 模型、地形资源与部署测试。
+- [`docs/`](docs/README.md)、[`tests/`](tests/README.md)、[`tools/`](tools/README.md)：方法文档、任务测试和辅助脚本。
 
 ## 克隆与安装
 
@@ -65,7 +63,8 @@ uv run go2-list-tasks
 ```
 
 `uv sync` 会创建 `.venv`、解析并安装全部依赖，并把 `mjlab`、`go1_tasks` 和
-`go2_tasks` 以可编辑方式安装进去。Linux 默认使用 CUDA 12.8 的 torch；若只需 CPU，
+`go2_tasks` 以可编辑方式安装进去。MuJoCo 与 MuJoCo Warp 3.11 从 PyPI 安装；
+Linux 默认使用 CUDA 12.8 的 torch。若只需 CPU，
 把 `pyproject.toml` 里的
 
 ```toml
@@ -82,20 +81,38 @@ torch = { index = "pytorch-cu128", marker = "sys_platform != 'darwin'" }
   `go1_tasks` 注册；
 - 包内 ID（`Go1-Velocity-*`、`Go2-Velocity-*`）——始终可用。
 
-Go1 AMP只注册包内ID，其余四项也有对应的历史ID；Go2任务都使用
-`Go2-Velocity-*`。
-
-已有历史 ID 与对应包内 ID 指向同一份配置。查看当前生效的 ID：
+Go1 AMP 只注册包内 ID，其余四项也有对应的历史 ID；Go2 任务都使用
+`Go2-Velocity-*`。已有历史 ID 与对应包内 ID 指向同一份配置。查看当前生效的 ID：
 
 ```bash
 uv run go1-list-tasks
 uv run go2-list-tasks
 ```
 
-各任务 checkpoint 分别存放在 `logs/rsl_rl/go1_velocity`、`go1_mob`、
-`go1_amp`、`go1_cts`、`go1_rma` 和 `go2_rough`、`go2_flat`、`go2_mob`、
-`go2_amp`、`go2_rough_amp`、`go2_paper_amp_teacher`、
-`go2_paper_amp_student`、`go2_cts`、`go2_him`；已有任务的checkpoint路径不变。
+### 任务总表
+
+每个任务的观测、训练命令、评估指标、sim2sim 入口和已知限制见 `docs/tasks/` 下
+对应的页面（索引：[`docs/tasks/README.md`](docs/tasks/README.md)）。
+
+| 任务 | 任务 ID | 页面 |
+| --- | --- | --- |
+| Go1 平地速度 | `Go1-Velocity-Flat` | [go1_flat](docs/tasks/go1_flat.md) |
+| Go1 崎岖地形速度 | `Go1-Velocity-Rough` | [go1_rough](docs/tasks/go1_rough.md) |
+| Go1 AMP | `Go1-Velocity-AMP` | [go1_amp](docs/tasks/go1_amp.md) |
+| Go1 MoB | `Go1-Velocity-MoB` | [go1_mob](docs/tasks/go1_mob.md) |
+| Go1 CTS | `Go1-Velocity-CTS` | [go1_cts](docs/tasks/go1_cts.md) |
+| Go1 RMA 两阶段 | 未注册，复用 Rough 环境 | [go1_rma](docs/tasks/go1_rma.md) |
+| Go2 平地速度 | `Go2-Velocity-Flat` | [go2_flat](docs/tasks/go2_flat.md) |
+| Go2 盲崎岖地形 | `Go2-Velocity-Rough` | [go2_rough](docs/tasks/go2_rough.md) |
+| Go2 AMP | `Go2-Velocity-AMP` | [go2_amp](docs/tasks/go2_amp.md) |
+| Go2 崎岖地形 AMP | `Go2-Velocity-Rough-AMP` | [go2_rough_amp](docs/tasks/go2_rough_amp.md) |
+| Go2 论文式 Rough AMP | `Go2-Velocity-Rough-AMP-Teacher` | [go2_paper_amp](docs/tasks/go2_paper_amp.md) |
+| Go2 MoB | `Go2-Velocity-MoB` | [go2_mob](docs/tasks/go2_mob.md) |
+| Go2 CTS | `Go2-Velocity-CTS` | [go2_cts](docs/tasks/go2_cts.md) |
+| Go2 HIM | `Go2-Velocity-HIM` | [go2_him](docs/tasks/go2_him.md) |
+
+检查点统一在 `logs/rsl_rl/<experiment_name>/<时间戳>/model_<迭代>.pt`，训练器在
+同一目录写出 `<时间戳>.onnx` 部署图。
 
 ## 训练与播放
 
@@ -145,6 +162,16 @@ uv run go2-train-paper-amp-student \
 运行判别器；它模仿已经学到 AMP 风格的教师。完整流程、网络维度和部署状态
 管理见 [`docs/go2_paper_amp.md`](docs/go2_paper_amp.md)。
 
+Go2 rough AMP 地形适应专项可从头训练，保留方向 Trot 与站立参考、严格零指令、
+域随机化和随机扰动：
+
+```bash
+uv run python -m go2_tasks.train_terrain_amp --iterations 8000 --num-envs 1024
+```
+
+课程最低起伏减小，最高难度和最终命令范围保持原值。详见
+[地形排查与训练说明](docs/go2_paper_amp.md#136-rough-摔倒排查后的从头训练2026-11-05)。
+
 Go2 HIM 任务（HIMLoco）只需一条命令即可训练，播放与独立 MuJoCo 验证：
 
 ```bash
@@ -192,8 +219,7 @@ Go2 任务位于 `src/go2_tasks/`，使用用户提供的 `go2_description` 自�
 uv run train Mjlab-Velocity-Rough-Unitree-Go1 --env.scene.num-envs 1024
 ```
 
-论文相关任务的详细说明见 [`docs/rma.md`](docs/rma.md)、
-[`docs/cts.md`](docs/cts.md)、[`docs/mob.md`](docs/mob.md)、
+每个 Go2 任务的操作入口见 [`docs/tasks/`](docs/tasks/README.md)，原理与复现差异见
 [`docs/go2_paper_amp.md`](docs/go2_paper_amp.md) 与
 [`docs/go2_him.md`](docs/go2_him.md)。
 
@@ -313,7 +339,8 @@ uv run python sim2sim/go1_sim.py \
   --terrain rough
 ```
 
-可选地形为 `flat`、`rough`、`stairs` 和 `rl_sar`。窗口中按 `1` 启用策略、
+可选地形为 `flat`、`rough`、`stairs`、`rl_sar` 和 `go2_rough`（训练地形导出，
+三个脚本通用，细节见 [`sim2sim/README.md`](sim2sim/README.md)）。窗口中按 `1` 启用策略、
 `0` 进入被动站立、`R` 重置；`W/S`、`A/D`、`Q/E` 分别控制前后、横向和
 转向，空格清零速度命令。`--terrain-seed N` 可改变随机崎岖地形；没有手柄时
 可传入 `--joystick ''`。
@@ -347,6 +374,9 @@ uv run go1-eval-cts /path/to/model_5000.pt --vx 0.5 --seconds 5
 
 ## 测试
 
+测试范围、Warp 缓存与系统 pytest 插件的处理方法见
+[测试说明](tests/README.md)。
+
 ```bash
 uv run pytest
 ```
@@ -371,11 +401,14 @@ PYTHONPATH=sim2sim uv run python -m unittest discover -s sim2sim/tests
 
 ```bash
 uv run python sim2sim/go1_sim.py --headless --steps 100
+uv run python sim2sim/go1_mob_sim.py --headless --steps 100
 uv run python sim2sim/go2_sim.py --headless --steps 100
 ```
 
-本仓库训练的 Flat（Go1/Go2 均为 48 维观测）和 Go1 MoB（1710 维观测）
-检查点有对应推理脚本；当前 Rough（235 维观测）和 CTS 检查点不支持直接运行。
+本仓库训练的 Flat（Go1/Go2 均为 48 维观测）、Go1 MoB（1710 维观测）和
+Go2 Rough/AMP（45 维盲策略）检查点有对应推理脚本；CTS 用 `--cts` 加载
+`<run>.onnx` 导出或 run 目录里的 `model_*.pt`（checkpoint 自带学生编码器，两者等价）；
+旧的 235 维 Rough 检查点仍不支持直接运行。
 由本仓库 `go1-train-rma` 生成的 RMA teacher/adapter 检查点可由 `go1_sim.py`
 加载。Go2 的检查点由 `go2_sim.py` 加载：
 
@@ -412,25 +445,12 @@ uv run python sim2sim/go2_sim.py \
 本项目自有代码采用 Apache-2.0 许可，见 [`LICENSE`](LICENSE)。随仓库
 分发的第三方代码保留其原有许可：
 
-- `framework/mjlab/` 为 [mjlab](https://github.com/mujocolab/mjlab) 的副本，
+- `framework/mjlab/` 基于 [mjlab 1.6.0](https://github.com/mujocolab/mjlab/releases/tag/v1.6.0)，
   主体采用 Apache-2.0；其中 3 个源文件保留了 Isaac Lab 的 BSD-3-Clause
   声明，许可文本见 [mjlab Apache 许可](framework/mjlab/LICENSE) 与
   [Isaac Lab BSD 许可](framework/mjlab/LICENSES/BSD-3-Clause.txt)；
-- `vendor/mujoco_warp/` 为
-  [mujoco_warp](https://github.com/google-deepmind/mujoco_warp) 的副本，
-  Apache-2.0，许可见 `vendor/mujoco_warp/LICENSE`；
 - `sim2sim/terrain_assets/` 中的 rl_sar 场景资源保留
   [上游许可](sim2sim/terrain_assets/RL_SAR_LICENSE)。
 
 再分发时请保留相应的版权声明和许可文件。机器人模型资产的来源与授权还应
 在公开发布前单独核对。
-
-Go2 rough AMP 地形适应专项从头训练（20秒持续命令与航向目标、修正起伏地形课程）：
-
-```bash
-uv run python -m go2_tasks.train_terrain_amp --iterations 8000 --num-envs 1024
-```
-
-保留30秒方向Trot与1.6秒站立参考、5%严格零指令、域随机化和随机扰动。
-课程最低起伏减小，最高地形难度保持原值；命令最终范围不变。
-详见[地形排查与训练说明](docs/go2_paper_amp.md#136-rough-摔倒排查后的从头训练2026-11-05)。
