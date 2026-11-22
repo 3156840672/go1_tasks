@@ -23,7 +23,7 @@ jobs:
           uv run list-envs --keyword Go
 
       - name: Run tests
-        run: uv run pytest -q
+        run: uv run python -m pytest -q
 
       - name: Test sim2sim
         run: |
